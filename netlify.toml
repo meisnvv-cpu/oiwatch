@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[images]
+  remote_images = ["https://pub-05cae86ceb4e45fc905d76c161531c5c\\.r2\\.dev/.*"]
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

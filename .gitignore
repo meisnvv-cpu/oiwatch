@@ -1,0 +1,11 @@
+.npm-cache/
+.wrangler-auth/
+node_modules/
+work/
+outputs/
+dist/
+deploy-*/
+.agents/
+.codex/
+eng.traineddata
+.env
