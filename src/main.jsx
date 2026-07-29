@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowDown, ArrowLeft, ArrowRight, Box, ChevronRight, Clock3, CreditCard, ExternalLink, Globe2, Instagram, Menu, MessageCircle, Minus, PackageCheck, Play, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, Box, ChevronRight, Clock3, CreditCard, ExternalLink, Globe2, Instagram, Menu, MessageCircle, Minus, PackageCheck, Play, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import './styles.css';
 import { deleteAdminProduct, getAdminSession, getPublishedProduct, getSiteSettings, listAdminCustomers, listAdminOrders, listAdminProducts, listPublishedBrands, listPublishedProducts, listPublishedProductsPage, saveAdminProduct, saveSiteSettings, signInAdmin, signOutAdmin, uploadAdminMedia } from './supabase.js';
 import { getCommerceCopy } from './commerce-copy.js';
@@ -1539,6 +1539,29 @@ function App() {
       </header>
 
       <main>
+        <section className="cinematic-hero" id="home">
+          <div className="hero-watch-layer" aria-hidden="true">
+            <img src="/images/hero-watch-web.jpg" alt="" fetchPriority="high"/>
+          </div>
+          <div className="hero-light-sweep" aria-hidden="true"/>
+          <div className="hero-dial" aria-hidden="true"><span/><span/><span/><span/></div>
+          <div className="cinematic-hero-content">
+            <p className="hero-kicker"><span>{t.featured}</span><b>01 / OIWATCH</b></p>
+            <h1>{t.hero}</h1>
+            <p className="cinematic-hero-copy">{t.intro}</p>
+            <div className="cinematic-hero-actions">
+              <button className="glass-primary" onClick={openShop}>{t.explore}<ArrowUpRight size={17}/></button>
+              <button className="glass-link" onClick={() => scrollTo('collection')}>{t.featured}<ArrowDown size={16}/></button>
+            </div>
+          </div>
+          <div className="hero-proof glass-panel">
+            <div><Clock3/><span><b>24H</b>{m.newItem}</span></div>
+            <div><ShieldCheck/><span><b>QC</b>{q.best}</span></div>
+            <div><Globe2/><span><b>WORLD</b>{m.shippingPartners}</span></div>
+          </div>
+          <button className="hero-scroll" onClick={() => scrollTo('collection')} aria-label={t.featured}><span/>{t.featured}</button>
+        </section>
+
         <section className="collection section immersive-collection" id="collection" onMouseMove={event => { const box = event.currentTarget.getBoundingClientRect(); event.currentTarget.style.setProperty('--pointer-x', `${((event.clientX - box.left) / box.width) * 100}%`); event.currentTarget.style.setProperty('--pointer-y', `${((event.clientY - box.top) / box.height) * 100}%`); }}>
           <div className="section-heading">
             <div><p className="kicker">{t.featured}</p><h2>{t.sectionTitle}</h2></div>
