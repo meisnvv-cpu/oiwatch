@@ -993,6 +993,7 @@ function App() {
   const [orderError, setOrderError] = useState('');
   const [paymentAsset, setPaymentAsset] = useState('USDT');
   const [paymentMethod, setPaymentMethod] = useState('crypto');
+  const [paymentChannel, setPaymentChannel] = useState('gateway');
   const [paymentInvoice, setPaymentInvoice] = useState(null);
   const [paymentProofStatus, setPaymentProofStatus] = useState('');
   const [paymentTxid, setPaymentTxid] = useState('');
@@ -1123,6 +1124,11 @@ function App() {
   ].sort((a,b) => new Date(b.sortDate)-new Date(a.sortDate));
   const submitOrder = async event => {
     event.preventDefault();
+    if (checkoutStep === 2) {
+      setCheckoutStep(3);
+      setOrderError('');
+      return;
+    }
     setOrderSubmitting(true);
     setOrderError('');
     if (!checkoutDetails) return;
@@ -1138,7 +1144,7 @@ function App() {
       const paymentResponse = await fetch('/.netlify/functions/create-crypto-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: orderNumber, amountUsd: paymentMethod === 'cod' ? 40 : cartTotal, orderTotal, asset: paymentAsset, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod }),
+        body: JSON.stringify({ orderId: orderNumber, amountUsd: paymentMethod === 'cod' ? 40 : cartTotal, orderTotal, asset: paymentAsset, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod, paymentChannel }),
       });
       const payment = await paymentResponse.json().catch(() => null);
       if (!paymentResponse.ok) throw new Error(payment?.error || 'Unable to create a crypto payment.');
@@ -1156,6 +1162,11 @@ function App() {
     if (['customerName','email','phone','country','streetAddress','postalCode'].some(key => !String(data.get(key) || '').trim())) { setOrderError('Please complete every contact and delivery field.'); return; }
     setCheckoutDetails(Object.fromEntries(data.entries()));
     setCheckoutStep(2);
+    setOrderError('');
+  };
+  const confirmPaymentMethod = event => {
+    event.preventDefault();
+    setCheckoutStep(3);
     setOrderError('');
   };
   const submitPaymentProof = async event => {
@@ -1592,6 +1603,7 @@ function App() {
             <p>{lang === 'zh' ? '第 2 步 / 付款方式' : 'STEP 2 / PAYMENT METHOD'}</p><h1>{lang === 'zh' ? '选择付款方式' : 'Choose payment method'}</h1>
             <fieldset><legend>{lang === 'zh' ? '付款方式' : 'Payment method'}</legend><div className="payment-method-options"><label><input type="radio" checked={paymentMethod === 'crypto'} onChange={() => setPaymentMethod('crypto')}/><span><strong>{lang === 'zh' ? '加密货币' : 'Cryptocurrency'}</strong><small>{lang === 'zh' ? '按链上金额付款' : 'Pay the order amount on-chain'}</small></span></label><label><input type="radio" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')}/><span><strong>{lang === 'zh' ? '货到付款' : 'Cash on delivery'}</strong><small>{lang === 'zh' ? '总额加 10%，先付 $40 运费' : '10% service fee; $40 shipping paid first'}</small></span></label></div></fieldset>{paymentMethod === 'crypto' ? <fieldset><legend>{lang === 'zh' ? '加密货币' : 'Cryptocurrency'}</legend><div className="crypto-options">{[['USDT','TRC20'],['USDC','ERC20'],['BTC','Bitcoin'],['ETH','Ethereum'],['SOL','Solana']].map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div></fieldset> : <div className="cod-summary"><strong>{lang === 'zh' ? '货到付款结算' : 'Cash-on-delivery breakdown'}</strong><span>{lang === 'zh' ? `订单总额（含 10% 服务费）：${money(cartTotal * 1.1)}` : `Order total with 10% service fee: ${money(cartTotal * 1.1)}`}</span><span>{lang === 'zh' ? '现在需支付运费：$40' : 'Shipping due now: $40'}</span><span>{lang === 'zh' ? `签收时支付余额：${money(Math.max(0, cartTotal * 1.1 - 40))}` : `Balance due on delivery: ${money(Math.max(0, cartTotal * 1.1 - 40))}`}</span></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit" disabled={orderSubmitting}><ShieldCheck size={17}/>{orderSubmitting ? (lang === 'zh' ? '正在创建付款…' : 'Creating payment…') : paymentMethod === 'cod' ? (lang === 'zh' ? '支付 $40 运费并确认货到付款' : 'Pay $40 shipping & confirm COD') : (lang === 'zh' ? `确认并创建付款 ${money(cartTotal)}` : `Confirm & create payment ${money(cartTotal)}`)}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(1)}>{lang === 'zh' ? '返回修改地址' : 'Back to address'}</button>
           </form>}
+          {checkoutStep === 3 && <section className="payment-channel-step"><p>STEP 3 / PAYMENT CHANNEL</p><h2>{lang === 'zh' ? '选择付款通道' : 'Choose payment channel'}</h2><div className="payment-method-options"><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'gateway'} onChange={() => setPaymentChannel('gateway')}/><span><strong>{lang === 'zh' ? '集成支付' : 'Integrated payment'}</strong><small>{lang === 'zh' ? '通过 PayGate 生成本订单专属付款地址' : 'PayGate generates a unique address for this order'}</small></span></label><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'direct'} onChange={() => setPaymentChannel('direct')}/><span><strong>{lang === 'zh' ? '直接扫码付款到我的钱包' : 'Scan to pay my wallet directly'}</strong><small>{lang === 'zh' ? '直接显示配置的钱包地址与二维码' : 'Shows the configured wallet address and QR code directly'}</small></span></label></div><button className="primary" type="button" disabled={orderSubmitting} onClick={submitOrder}><ShieldCheck size={17}/>{orderSubmitting ? 'Creating payment...' : paymentChannel === 'gateway' ? 'Continue with integrated payment' : 'Show wallet QR code'}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(2)}>Back to payment method</button></section>}
           <aside className="order-summary"><h2>{lang === 'zh' ? '订单摘要' : 'Order summary'}</h2>{cart.map(item => { const content = item.customManaged ? { name:lang==='zh'?item.nameZh:item.translations?.[lang]?.name||item.nameEn||item.translations?.en?.name||'Selected timepiece', collection:lang==='zh'?item.brandZh:item.brandEn||'OiWatch' } : item.customMeta ? { name:(lang==='zh'?item.customMeta.brand.zhLines:item.customMeta.brand.enLines)[item.customMeta.lineIndex], collection:lang==='zh'?item.customMeta.brand.zh:item.customMeta.brand.en } : getWatchContent(item.id,lang); return <article key={item.id}><img src={item.image} alt={content.name}/><div><span>{content.collection}</span><h3>{content.name}</h3><p>{lang==='zh'?'数量':'Quantity'}：{item.quantity}</p></div><strong>{money(itemPrice(item)*item.quantity)}</strong></article>})}<div className="summary-total"><span>{lang==='zh'?'订单合计':'Order total'}</span><strong>{money(cartTotal)}</strong></div></aside>
         </div>}
       </div>}
