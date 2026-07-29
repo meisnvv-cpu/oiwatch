@@ -44,20 +44,28 @@ export async function handler(event) {
 
   const address = process.env[asset.addressEnv];
   const siteUrl = String(process.env.PUBLIC_SITE_URL || '').replace(/\/+$/, '');
-  if (!address || !siteUrl || !process.env.SUPABASE_SERVICE_ROLE_KEY) return reply(503, { error: 'Crypto payments are not configured yet' });
+  if (!address || !siteUrl) return reply(503, { error: 'Crypto payments are not configured yet' });
 
   try {
-    await createOrder(input, orderId, orderTotal);
     // Payments go directly to the configured wallet. This avoids relying on a
     // third-party address-forwarding service during checkout.
     const qr = new URL('https://api.qrserver.com/v1/create-qr-code/');
     qr.searchParams.set('size', '360x360');
     qr.searchParams.set('format', 'png');
     qr.searchParams.set('data', address);
-    await paymentRecord('POST', 'payment_orders?on_conflict=id', {
-      id: orderId, currency:'USD', amount:amountUsd, customer:{}, items:[], status:'awaiting_payment',
-      provider_invoice_id:orderId, provider_payment_id:address, provider_status:'awaiting_payment',
-    });
+    // A database outage must never prevent a customer from receiving the
+    // configured payment address. Recording is retried by the proof flow.
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        await createOrder(input, orderId, orderTotal);
+        await paymentRecord('POST', 'payment_orders?on_conflict=id', {
+          id: orderId, currency:'USD', amount:amountUsd, customer:{}, items:[], status:'awaiting_payment',
+          provider_invoice_id:orderId, provider_payment_id:address, provider_status:'awaiting_payment',
+        });
+      } catch (error) {
+        console.warn(JSON.stringify({ event:'payment_record_deferred', orderId, message:error.message }));
+      }
+    }
     return reply(200, { orderId, asset: String(input.asset).toUpperCase(), address, amountCoin: null, qrCode: qr.toString(), status: 'awaiting_payment' });
   } catch {
     return reply(502, { error: 'Unable to reach the payment provider' });
