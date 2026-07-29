@@ -51,15 +51,16 @@ export async function handler(event) {
   const paymentChannel = input.paymentChannel === 'direct' ? 'direct' : 'gateway';
   if (!asset || !/^[A-Z0-9-]{8,80}$/.test(orderId) || !Number.isFinite(amountUsd) || amountUsd <= 0 || !Number.isFinite(orderTotal) || orderTotal < amountUsd) return reply(400, { error: 'Invalid payment request' });
 
-  const address = process.env[asset.addressEnv];
   const siteUrl = String(process.env.PUBLIC_SITE_URL || '').replace(/\/+$/, '');
-  if (!address || !siteUrl) return reply(503, { error: 'Crypto payments are not configured yet' });
 
   if (paymentChannel === 'direct') {
+    const address = process.env[asset.addressEnv];
+    if (!address) return reply(503, { error: 'Direct wallet payments are not configured for this asset yet' });
     return directWalletInvoice(orderId, String(input.asset).toUpperCase(), address);
   }
 
   try {
+    if (!siteUrl) return reply(503, { error: 'PayGate card checkout is not configured yet' });
     const callback = new URL('/.netlify/functions/crypto-payment-callback', siteUrl);
     callback.searchParams.set('order_id', orderId);
     const payoutAddress = process.env.PAYGATE_USDC_POLYGON_ADDRESS;
