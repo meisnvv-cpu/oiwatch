@@ -11,6 +11,14 @@ function reply(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) };
 }
 
+function directWalletInvoice(orderId, asset, address) {
+  const qr = new URL('https://api.qrserver.com/v1/create-qr-code/');
+  qr.searchParams.set('size', '360x360');
+  qr.searchParams.set('format', 'png');
+  qr.searchParams.set('data', address);
+  return reply(200, { orderId, asset, address, amountCoin:null, qrCode:qr.toString(), status:'awaiting_payment', gatewayFallback:true });
+}
+
 async function paymentRecord(method, path, body) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     method,
@@ -40,11 +48,16 @@ export async function handler(event) {
   const orderId = String(input.orderId || '');
   const amountUsd = Number(input.amountUsd);
   const orderTotal = Number(input.orderTotal || amountUsd);
+  const paymentChannel = input.paymentChannel === 'direct' ? 'direct' : 'gateway';
   if (!asset || !/^[A-Z0-9-]{8,80}$/.test(orderId) || !Number.isFinite(amountUsd) || amountUsd <= 0 || !Number.isFinite(orderTotal) || orderTotal < amountUsd) return reply(400, { error: 'Invalid payment request' });
 
   const address = process.env[asset.addressEnv];
   const siteUrl = String(process.env.PUBLIC_SITE_URL || '').replace(/\/+$/, '');
   if (!address || !siteUrl) return reply(503, { error: 'Crypto payments are not configured yet' });
+
+  if (paymentChannel === 'direct') {
+    return directWalletInvoice(orderId, String(input.asset).toUpperCase(), address);
+  }
 
   try {
     const callback = new URL('/.netlify/functions/crypto-payment-callback', siteUrl);
@@ -55,7 +68,10 @@ export async function handler(event) {
     endpoint.searchParams.set('confirmations', '1');
     const walletResponse = await fetch(endpoint);
     const wallet = await walletResponse.json().catch(() => null);
-    if (!walletResponse.ok || !wallet?.address_in || !wallet?.ipn_token) return reply(502, { error: 'Unable to create a crypto payment address' });
+    if (!walletResponse.ok || !wallet?.address_in || !wallet?.ipn_token) {
+      console.warn(JSON.stringify({ event:'paygate_fallback', orderId, status:walletResponse.status }));
+      return directWalletInvoice(orderId, String(input.asset).toUpperCase(), address);
+    }
     const convert = new URL(`https://api.paygate.to/crypto/${asset.ticker}/convert.php`);
     convert.searchParams.set('from', 'usd');
     convert.searchParams.set('value', String(amountUsd));
@@ -78,7 +94,8 @@ export async function handler(event) {
       }
     }
     return reply(200, { orderId, asset: String(input.asset).toUpperCase(), address:wallet.address_in, amountCoin, qrCode: qr.toString(), status: 'awaiting_payment' });
-  } catch {
-    return reply(502, { error: 'Unable to reach the payment provider' });
+  } catch (error) {
+    console.warn(JSON.stringify({ event:'paygate_fallback', orderId, message:error.message }));
+    return directWalletInvoice(orderId, String(input.asset).toUpperCase(), address);
   }
 }
