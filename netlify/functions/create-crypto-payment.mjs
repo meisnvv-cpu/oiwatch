@@ -46,32 +46,19 @@ export async function handler(event) {
   const siteUrl = String(process.env.PUBLIC_SITE_URL || '').replace(/\/+$/, '');
   if (!address || !siteUrl || !process.env.SUPABASE_SERVICE_ROLE_KEY) return reply(503, { error: 'Crypto payments are not configured yet' });
 
-  const callback = new URL('/.netlify/functions/crypto-payment-callback', siteUrl);
-  callback.searchParams.set('order_id', orderId);
-  const endpoint = new URL(`https://api.paygate.to/crypto/${asset.ticker}/wallet.php`);
-  endpoint.searchParams.set('address', address);
-  endpoint.searchParams.set('callback', callback.toString());
-  endpoint.searchParams.set('confirmations', '1');
-
   try {
     await createOrder(input, orderId, orderTotal);
-    const response = await fetch(endpoint);
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data?.address_in) return reply(502, { error: 'Unable to create a crypto payment address' });
-    const convert = new URL(`https://api.paygate.to/crypto/${asset.ticker}/convert.php`);
-    convert.searchParams.set('from', 'USD');
-    convert.searchParams.set('value', String(amountUsd));
-    const conversion = await fetch(convert).then(result => result.json()).catch(() => null);
-    const amountCoin = conversion?.value_coin || conversion?.value || null;
-    const qr = new URL(`https://api.paygate.to/crypto/${asset.ticker}/qrcode.php`);
-    qr.searchParams.set('address', data.address_in);
-    if (amountCoin) qr.searchParams.set('amount', String(amountCoin));
-    const qrData = await fetch(qr).then(result => result.json()).catch(() => null);
+    // Payments go directly to the configured wallet. This avoids relying on a
+    // third-party address-forwarding service during checkout.
+    const qr = new URL('https://api.qrserver.com/v1/create-qr-code/');
+    qr.searchParams.set('size', '360x360');
+    qr.searchParams.set('format', 'png');
+    qr.searchParams.set('data', address);
     await paymentRecord('POST', 'payment_orders?on_conflict=id', {
       id: orderId, currency:'USD', amount:amountUsd, customer:{}, items:[], status:'awaiting_payment',
-      provider_invoice_id:data.ipn_token, provider_payment_id:data.address_in, provider_status:'unpaid',
+      provider_invoice_id:orderId, provider_payment_id:address, provider_status:'awaiting_payment',
     });
-    return reply(200, { orderId, asset: String(input.asset).toUpperCase(), address: data.address_in, amountCoin, qrCode: qrData?.qr_code ? `data:image/png;base64,${qrData.qr_code}` : null, status: 'awaiting_payment' });
+    return reply(200, { orderId, asset: String(input.asset).toUpperCase(), address, amountCoin: null, qrCode: qr.toString(), status: 'awaiting_payment' });
   } catch {
     return reply(502, { error: 'Unable to reach the payment provider' });
   }
