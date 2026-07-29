@@ -62,26 +62,22 @@ export async function handler(event) {
   try {
     const callback = new URL('/.netlify/functions/crypto-payment-callback', siteUrl);
     callback.searchParams.set('order_id', orderId);
-    const endpoint = new URL(`https://api.paygate.to/crypto/${asset.ticker}/wallet.php`);
-    endpoint.searchParams.set('address', address);
+    const payoutAddress = process.env.PAYGATE_USDC_POLYGON_ADDRESS;
+    if (!payoutAddress) return reply(503, { error: 'PayGate card checkout is not configured yet' });
+    const endpoint = new URL('https://api.paygate.to/control/wallet.php');
+    endpoint.searchParams.set('address', payoutAddress);
     endpoint.searchParams.set('callback', callback.toString());
-    endpoint.searchParams.set('confirmations', '1');
     const walletResponse = await fetch(endpoint);
     const wallet = await walletResponse.json().catch(() => null);
-    if (!walletResponse.ok || !wallet?.address_in || !wallet?.ipn_token) {
-      console.warn(JSON.stringify({ event:'paygate_fallback', orderId, status:walletResponse.status }));
-      return directWalletInvoice(orderId, String(input.asset).toUpperCase(), address);
-    }
-    const convert = new URL(`https://api.paygate.to/crypto/${asset.ticker}/convert.php`);
-    convert.searchParams.set('from', 'usd');
-    convert.searchParams.set('value', String(amountUsd));
-    const conversion = await fetch(convert).then(result => result.json()).catch(() => null);
-    const amountCoin = conversion?.value_coin || null;
-    const qr = new URL(`https://api.paygate.to/crypto/${asset.ticker}/qrcode.php`);
-    qr.searchParams.set('address', wallet.address_in);
-    if (amountCoin) qr.searchParams.set('amount', String(amountCoin));
-    // A database outage must never prevent a customer from receiving the
-    // configured payment address. Recording is retried by the proof flow.
+    if (!walletResponse.ok || !wallet?.address_in) throw new Error('PayGate could not create a secure checkout');
+    const checkout = new URL('https://checkout.paygate.to/pay.php');
+    checkout.searchParams.set('address', wallet.address_in);
+    checkout.searchParams.set('amount', amountUsd.toFixed(2));
+    checkout.searchParams.set('email', String(input.customer?.email || ''));
+    checkout.searchParams.set('currency', 'USD');
+    checkout.searchParams.set('background', '#f5f2ec');
+    checkout.searchParams.set('theme', '#171717');
+    checkout.searchParams.set('button', '#9d7943');
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       try {
         await createOrder(input, orderId, orderTotal);
@@ -93,9 +89,9 @@ export async function handler(event) {
         console.warn(JSON.stringify({ event:'payment_record_deferred', orderId, message:error.message }));
       }
     }
-    return reply(200, { orderId, asset: String(input.asset).toUpperCase(), address:wallet.address_in, amountCoin, qrCode: qr.toString(), status: 'awaiting_payment' });
+    return reply(200, { orderId, status: 'redirect', paymentUrl: checkout.toString() });
   } catch (error) {
-    console.warn(JSON.stringify({ event:'paygate_fallback', orderId, message:error.message }));
-    return directWalletInvoice(orderId, String(input.asset).toUpperCase(), address);
+    console.warn(JSON.stringify({ event:'paygate_checkout_error', orderId, message:error.message }));
+    return reply(502, { error: 'Unable to create the PayGate checkout. Please try again or choose direct wallet payment.' });
   }
 }
