@@ -12,8 +12,17 @@ create table if not exists public.store_products (
   status text not null default 'draft' check (status in ('draft', 'published')),
   translations jsonb not null default '{}'::jsonb,
   media jsonb not null default '[]'::jsonb,
+  tags text[] not null default '{}'::text[],
+  source_verified boolean not null default false,
+  source_evidence_note text not null default '',
+  source_verified_at timestamptz,
+  source_verified_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint store_products_published_source_evidence_check check (
+    status <> 'published'
+    or (source_verified and btrim(source_evidence_note) <> '')
+  )
 );
 
 alter table public.store_products enable row level security;
@@ -21,7 +30,7 @@ alter table public.store_products enable row level security;
 drop policy if exists "Published products are public" on public.store_products;
 create policy "Published products are public"
 on public.store_products for select
-using (status = 'published' or public.is_admin());
+using ((status = 'published' and source_verified) or public.is_admin());
 
 drop policy if exists "Admins manage store products" on public.store_products;
 create policy "Admins manage store products"
