@@ -1148,6 +1148,10 @@ function App() {
       });
       const payment = await paymentResponse.json().catch(() => null);
       if (!paymentResponse.ok) throw new Error(payment?.error || 'Unable to create a crypto payment.');
+      if (payment.paymentUrl) {
+        window.location.assign(payment.paymentUrl);
+        return;
+      }
       setPaymentInvoice(payment);
       setOrderPlaced(true);
     } catch (error) {
@@ -1576,14 +1580,13 @@ function App() {
 
       {checkoutOpen && <div className="checkout-page">
         <header className="checkout-header"><SiteLogo/><button onClick={() => setCheckoutOpen(false)}><X size={18}/>{lang === 'zh' ? '返回购物车' : 'Return to bag'}</button></header>
-        {orderPlaced && paymentInvoice && <div className="order-success crypto-payment">
+        {orderPlaced && paymentInvoice && <div className={`order-success crypto-payment ${paymentChannel === 'gateway' ? 'paygate-checkout' : 'direct-wallet-checkout'}`}>
           <ShieldCheck/><p>{paymentMethod === 'cod' ? 'COD SHIPPING PAYMENT' : 'CRYPTO PAYMENT'}</p><h2>{paymentMethod === 'cod' ? 'Pay $40 shipping to confirm COD' : 'Scan to complete payment'}</h2>
-          <span>{paymentMethod === 'cod' ? `Order ${paymentInvoice.orderId}. This payment covers shipping only; the remaining balance is due on delivery.` : `Order ${paymentInvoice.orderId}. Pay using ${paymentInvoice.asset} only.`}</span>
+          {paymentChannel === 'gateway' ? <span>STEP 4 / PAYGATE SECURE CHECKOUT. Order {paymentInvoice.orderId}. Scan the PayGate code and pay the exact {paymentInvoice.asset} amount shown below.</span> : <span>{paymentMethod === 'cod' ? `Order ${paymentInvoice.orderId}. This payment covers shipping only; the remaining balance is due on delivery.` : `Order ${paymentInvoice.orderId}. Pay using ${paymentInvoice.asset} only.`}</span>}
           {paymentInvoice.qrCode ? <><img className="payment-qr" src={paymentInvoice.qrCode} alt="Payment QR code"/><a className="payment-copy" href={paymentInvoice.qrCode} download={`oiwatch-${paymentInvoice.orderId}-${paymentInvoice.asset}-qr.png`}>Save QR code</a></> : <div className="payment-qr-placeholder">QR code unavailable</div>}
           <strong className="payment-due">{paymentInvoice.amountCoin ? `${paymentInvoice.amountCoin} ${paymentInvoice.asset}` : paymentInvoice.asset}</strong>
-          <code className="payment-address">{paymentInvoice.address}</code>
-          <button type="button" className="payment-copy" onClick={() => navigator.clipboard?.writeText(paymentInvoice.address)}>Copy address</button>
-          <small>Use only the selected asset and network. Payment stays pending until verified on-chain.</small>
+          {paymentChannel === 'direct' && <><code className="payment-address">{paymentInvoice.address}</code><button type="button" className="payment-copy" onClick={() => navigator.clipboard?.writeText(paymentInvoice.address)}>Copy address</button></>}
+          <small>{paymentChannel === 'gateway' ? 'This is an order-specific PayGate payment QR code. Your personal wallet address is not displayed in this checkout.' : 'Use only the selected asset and network. Payment stays pending until verified on-chain.'}</small>
           <form className="payment-proof" onSubmit={submitPaymentProof}>
             <label>Transaction hash<input name="txid" placeholder="Paste transaction hash" autoComplete="off"/></label>
             <label>Payment screenshot<input name="screenshot" type="file" accept="image/png,image/jpeg,image/webp"/></label>
