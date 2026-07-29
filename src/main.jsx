@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowDown, ArrowLeft, ArrowRight, ChevronRight, Clock3, Globe2, Instagram, Menu, MessageCircle, Minus, Play, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Trash2, X } from 'lucide-react';
 import './styles.css';
-import { createOrder, deleteAdminProduct, getAdminSession, getPublishedProduct, getSiteSettings, listAdminCustomers, listAdminOrders, listAdminProducts, listPublishedBrands, listPublishedProducts, listPublishedProductsPage, saveAdminProduct, saveSiteSettings, signInAdmin, signOutAdmin, uploadAdminMedia } from './supabase.js';
+import { deleteAdminProduct, getAdminSession, getPublishedProduct, getSiteSettings, listAdminCustomers, listAdminOrders, listAdminProducts, listPublishedBrands, listPublishedProducts, listPublishedProductsPage, saveAdminProduct, saveSiteSettings, signInAdmin, signOutAdmin, uploadAdminMedia } from './supabase.js';
 
 const watches = [
   {
@@ -160,6 +160,7 @@ const languageOptions = [
   ['zh', '中文'], ['en', 'English'], ['ja', '日本語'], ['ko', '한국어'],
   ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'],
 ];
+const ISO_COUNTRY_CODES = 'AF,AX,AL,DZ,AS,AD,AO,AI,AQ,AG,AR,AM,AW,AU,AT,AZ,BS,BH,BD,BB,BY,BE,BZ,BJ,BM,BT,BO,BQ,BA,BW,BV,BR,IO,BN,BG,BF,BI,CV,KH,CM,CA,KY,CF,TD,CL,CN,CX,CC,CO,KM,CG,CD,CK,CR,CI,HR,CU,CW,CY,CZ,DK,DJ,DM,DO,EC,EG,SV,GQ,ER,EE,SZ,ET,FK,FO,FJ,FI,FR,GF,PF,TF,GA,GM,GE,DE,GH,GI,GR,GL,GD,GP,GU,GT,GG,GN,GW,GY,HT,HM,VA,HN,HK,HU,IS,IN,ID,IR,IQ,IE,IM,IL,IT,JM,JP,JE,JO,KZ,KE,KI,KP,KR,KW,KG,LA,LV,LB,LS,LR,LY,LI,LT,LU,MO,MG,MW,MY,MV,ML,MT,MH,MQ,MR,MU,YT,MX,FM,MD,MC,MN,ME,MS,MA,MZ,MM,NA,NR,NP,NL,NC,NZ,NI,NE,NG,NU,NF,MK,MP,NO,OM,PK,PW,PS,PA,PG,PY,PE,PH,PN,PL,PT,PR,QA,RE,RO,RU,RW,BL,SH,KN,LC,MF,PM,VC,WS,SM,ST,SA,SN,RS,SC,SL,SG,SX,SK,SI,SB,SO,ZA,GS,SS,ES,LK,SD,SR,SJ,SE,CH,SY,TW,TJ,TZ,TH,TL,TG,TK,TO,TT,TN,TR,TM,TC,TV,UG,UA,AE,GB,US,UM,UY,UZ,VU,VE,VN,VG,VI,WF,EH,YE,ZM,ZW'.split(',');
 
 const brandDomainCatalog = [
   'rolex.com','patek.com','audemarspiguet.com','vacheron-constantin.com','richardmille.com',
@@ -652,6 +653,7 @@ const qualityCopy = {
 
 function optimizedImage(url, width = 640, quality = 72) {
   if (!url || url.startsWith('blob:') || url.startsWith('data:') || !url.startsWith('http')) return url;
+  if (typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1|192\.168\.)/.test(window.location.hostname)) return url;
   return `/.netlify/images?url=${encodeURIComponent(url)}&w=${width}&q=${quality}&fit=contain`;
 }
 
@@ -660,9 +662,9 @@ function catalogDisplayProduct(product, lang) {
     ...product,
     tags:deriveProductTags(product),
     sortDate:product.updatedAt || new Date().toISOString(),
-    displayName:lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.nameZh,
-    displayBrand:lang === 'zh' ? product.brandZh : product.brandEn,
-    description:product.translations?.en?.description || product.descriptionZh,
+    displayName:lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece',
+    displayBrand:lang === 'zh' ? product.brandZh : product.brandEn || 'OiWatch',
+    description:lang === 'zh' ? product.descriptionZh : product.translations?.[lang]?.description || product.descriptionEn || product.translations?.en?.description || 'Product information is being prepared.',
     mediaUrls:product.media?.map(media => {
       const type = media.contentType || media.type || (/\.(mp4|webm|mov|m4v)(?:\?|$)/i.test(media.url || '') ? 'video' : 'image');
       return { url:media.url, type };
@@ -694,7 +696,7 @@ function cleanDescriptionText(value = '') {
     .trim();
 }
 
-function descriptionList(value) {
+function descriptionList(value, lang = 'en') {
   const source = cleanDescriptionText(value);
   const sections = descriptionSections.map(([label, chineseMarker]) => {
     const startMatch = new RegExp(`\\b${label.replace(' ', '\\s+')}\\b`, 'i').exec(source);
@@ -707,13 +709,12 @@ function descriptionList(value) {
       .filter(index => Number.isFinite(index) && index > 0)
       .sort((a, b) => a - b)[0];
     const end = markerMatch ? markerMatch.index : (Number.isFinite(nextLabel) ? nextLabel : tail.length);
-    const detail = tail.slice(0, end).replace(/[\u3400-\u9fff]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const detail = tail.slice(0, end).replace(/\s+/g, ' ').trim();
     return detail ? { label, detail, order:startMatch.index } : null;
   }).filter(Boolean).sort((a, b) => a.order - b.order);
 
   if (sections.length) return sections;
-  const english = source.replace(/[\u3400-\u9fff]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return english ? [{ label:'Details', detail:english, order:0 }] : [];
+  return source ? [{ label:lang === 'zh' ? '商品详情' : 'Details', detail:source, order:0 }] : [];
 }
 
 function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cartPulse, onBack, onCart, onProduct, onAdd }) {
@@ -722,6 +723,7 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
   const [catalog, setCatalog] = useState([]);
   const [brandOptions, setBrandOptions] = useState([]);
   const [page, setPage] = useState(0);
+  const [pageInput, setPageInput] = useState('1');
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const pageSize = 24;
@@ -745,6 +747,7 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
         setCatalog(result.products);
         setTotal(result.total);
         setPage(0);
+        setPageInput('1');
       } catch (error) {
         console.warn('Paged catalogue unavailable.', error);
         setCatalog(products.slice(0, pageSize));
@@ -768,6 +771,20 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
     } finally {
       setLoading(false);
     }
+  };
+
+  const goToPage = async () => {
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    const requested = Math.min(lastPage, Math.max(1, Number.parseInt(pageInput, 10) || 1));
+    setPageInput(String(requested));
+    setLoading(true);
+    try {
+      const result = await listPublishedProductsPage({ page:requested - 1, pageSize, query, brand:brand === 'all' ? '' : brand });
+      setCatalog(result.products);
+      setTotal(result.total);
+      setPage(requested - 1);
+      window.scrollTo({ top:0, behavior:'smooth' });
+    } finally { setLoading(false); }
   };
 
   const displayed = catalog.map(product => catalogDisplayProduct(product, lang));
@@ -835,7 +852,9 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
       </div>
       {(catalog.length < total || loading) && <div className="shop-pagination">
         <button onClick={loadMore} disabled={loading}>{loading ? labels.loading : labels.more}</button>
-        <span>{catalog.length} / {total}</span>
+        <span>{page + 1} / {Math.max(1, Math.ceil(total / pageSize))}</span>
+        <label>{lang === 'zh' ? '页码' : 'Page'}<input type="number" min="1" max={Math.max(1, Math.ceil(total / pageSize))} value={pageInput} onChange={event => setPageInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') goToPage(); }}/></label>
+        <button onClick={goToPage} disabled={loading}>{lang === 'zh' ? '跳转' : 'Go'}</button>
       </div>}
     </main>
   </div>;
@@ -844,7 +863,7 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
 function ShopProductPage({ product, products, lang, money, cartCount, cartPulse, onBack, onCart, onAdd, onProduct }) {
   const [mediaIndex, setMediaIndex] = useState(0);
   const media = product.mediaUrls?.length ? product.mediaUrls : [{ url:'/images/watch-aurelia-web.jpg', type:'image/jpeg' }];
-  const descriptionItems = useMemo(() => descriptionList(product.description), [product.description]);
+  const descriptionItems = useMemo(() => descriptionList(product.description, lang), [product.description, lang]);
   const labels = lang === 'zh'
     ? { back:'返回商品', details:'商品详情', condition:'商品状态', conditionValue:'全新 / 未佩戴', delivery:'配送', deliveryValue:'全球安全配送', stock:'库存', add:'加入购物车', note:'商品说明', swipe:'左右滑动查看图片和视频' }
     : { back:'Back to shop', details:'Product details', condition:'Condition', conditionValue:'New / Unworn', delivery:'Delivery', deliveryValue:'Secure worldwide delivery', stock:'Stock', add:'Add to bag', note:'Description', swipe:'Swipe through images and video' };
@@ -913,6 +932,31 @@ function ShopProductPage({ product, products, lang, money, cartCount, cartPulse,
   </div>;
 }
 
+function PaymentGuide({ lang, activeTab, setActiveTab, onClose }) {
+  const chinese = lang === 'zh';
+  const content = {
+    why: chinese ? { title:'为什么提供两种付款方式', body:'我们保留加密货币与货到付款两种清晰的结算路径，方便不同地区的客户按自己的习惯选择。每笔订单都会生成订单编号、配送记录与状态更新，便于核对和追踪。' } : { title:'Why we offer two payment methods', body:'We keep two clear checkout paths, crypto and cash on delivery, so customers in different regions can choose what fits them. Every order has an order number, delivery record and status updates for straightforward tracking.' },
+    crypto: chinese ? { title:'加密货币付款', body:'确认订单后，选择币种并使用页面显示的钱包地址付款。提交交易哈希后可打开区块浏览器查看确认进度。请务必核对网络、币种、金额和订单号；链上交易一旦确认通常无法撤回。' } : { title:'Paying with crypto', body:'After confirming the order, choose an asset and pay to the wallet shown on the page. Submit the transaction hash, then open the block explorer to follow confirmations. Always check the network, asset, amount and order number; confirmed on-chain transactions are generally irreversible.' },
+    cod: chinese ? { title:'货到付款', body:'在支持的地区，订单会先完成地址与配送可行性确认，再安排可追踪发货。请在收货时按承运商及当地规定完成付款。货到付款是否可用会随目的地、订单金额和物流服务而变化。' } : { title:'Cash on delivery', body:'Where available, we confirm the delivery address and serviceability before arranging tracked dispatch. Payment is completed on delivery according to the carrier and local requirements. Availability varies by destination, order value and shipping service.' },
+    paypal: chinese ? { title:'为什么暂不提供 PayPal', body:'为了让付款、物流与售后记录保持一致，我们目前只提供能与订单和配送流程直接核对的结算方式。这样可以减少地址、付款人与收件信息不一致带来的延误，并让客户更容易查看自己的订单进度。' } : { title:'Why PayPal is not currently offered', body:'To keep payment, shipment and support records aligned, we currently use checkout methods that can be matched directly to the order and delivery flow. This helps reduce delays caused by mismatched payer, address and recipient information, while keeping order progress clear for customers.' },
+  }[activeTab];
+  const enhanced = {
+    crypto: chinese ? { title:'加密货币付款', body:'下单后选择币种与网络，复制付款地址或保存二维码，在你的钱包应用内发起转账。付款后提交交易哈希；页面会提供区块浏览器链接以查看确认进度。务必核对网络、币种、金额和订单号，链上确认后的交易通常无法撤回。', notes:['使用步骤：选择币种；在钱包内粘贴地址或扫描二维码；核对网络与金额；提交交易哈希；等待链上确认。','应用选择仅作一般信息：北美和欧洲常见 Coinbase、Kraken、Crypto.com；Binance 在许多国际地区可用；亚洲地区请选择当地合规可用的钱包或交易平台。请先确认当地法规、平台资格和资产支持情况。'] } : { title:'Paying with crypto', body:'Choose an asset and network, copy the payment address or save the QR code, then send from your own wallet app. Submit the transaction hash after payment; the order page links to a block explorer for confirmations. Always check network, asset, amount and order number. Confirmed on-chain transfers are generally irreversible.', notes:['How to pay: choose an asset; paste the address or scan the QR code in your wallet; check network and amount; submit the transaction hash; wait for on-chain confirmation.','App guidance is general information only: Coinbase, Kraken and Crypto.com are commonly used in North America and Europe; Binance is widely used internationally; in Asia, choose a locally compliant wallet or exchange. Check local rules, eligibility and supported assets first.'] },
+    cod: chinese ? { title:'货到付款', body:'货到付款仅在支持的目的地开放。该方式的订单总额比加密货币付款高 10%，并且需先支付运费；余额在签收时按承运商及当地规定支付。我们会先确认地址、物流服务能力和运费，再安排可追踪发货。' } : { title:'Cash on delivery', body:'Cash on delivery is available only for supported destinations. The total is 10% higher than crypto payment, and shipping must be paid in advance; the remaining balance is paid on delivery according to carrier and local requirements. We confirm the address, serviceability and shipping charge before tracked dispatch.' },
+    tracking: chinese ? { title:'货物追踪', body:'发货后会提供承运商和追踪号码。可使用以下官方追踪页面查询最新状态。' } : { title:'Shipment tracking', body:'After dispatch, you will receive the carrier name and tracking number. Use the official tracking pages below for current delivery status.' },
+  };
+  const guide = enhanced[activeTab] || content;
+  const tabs = [['why', chinese ? '付款方式' : 'Payment options'], ['crypto', chinese ? '加密货币' : 'Crypto'], ['cod', chinese ? '货到付款' : 'Cash on delivery'], ['tracking', chinese ? '物流追踪' : 'Tracking'], ['paypal', chinese ? 'PayPal 说明' : 'PayPal']];
+  return <div className="payment-guide-page">
+    <header className="payment-guide-header"><button onClick={onClose}><ArrowLeft size={17}/>{chinese ? '返回首页' : 'Back to home'}</button><SiteLogo/><span>{chinese ? '付款说明' : 'PAYMENT GUIDE'}</span></header>
+    <main className="payment-guide-content">
+      <section className="payment-guide-intro"><p className="kicker">{chinese ? '透明 · 可追踪 · 清晰' : 'CLEAR · TRACEABLE · SIMPLE'}</p><h1>{chinese ? '付款说明' : 'Payment guide'}</h1><p>{chinese ? '选择适合你的付款方式。以下说明帮助你在下单前了解每一步。' : 'Choose the checkout path that suits you. These notes explain what to expect before you place an order.'}</p></section>
+      <div className="payment-video-placeholders" aria-label={chinese ? '授权视频位置' : 'Licensed video placeholders'}><article><Play size={22}/><span>{chinese ? '诚信与安全故事视频位 01' : 'Trust & safety story 01'}</span></article><article><Play size={22}/><span>{chinese ? '诚信与安全故事视频位 02' : 'Trust & safety story 02'}</span></article></div>
+      <section className="payment-guide-layout"><nav>{tabs.map(([id,label]) => <button key={id} className={id === activeTab ? 'active' : ''} onClick={() => setActiveTab(id)}>{label}<ChevronRight size={16}/></button>)}</nav><article><p className="kicker">{chinese ? '订单支持' : 'ORDER SUPPORT'}</p><h2>{guide.title}</h2><p>{guide.body}</p>{guide.notes?.map(note => <p className="payment-guide-note" key={note}>{note}</p>)}{activeTab === 'tracking' && <div className="tracking-links">{[['DHL','https://www.dhl.com/global-en/home/tracking.html'],['FedEx','https://www.fedex.com/fedextrack/'],['UPS','https://www.ups.com/track'],['EMS','https://www.ems.post/en/global-network/tracking'],['SF Express','https://www.sf-international.com/us/en/dynamic_function/waybill/#search/bill-number/'],['Hongkong Post','https://webapp.hongkongpost.hk/en/mail_tracking/index.html'],['Aramex','https://www.aramex.com/us/en/track/shipments']].map(([name,url]) => <a key={name} href={url} target="_blank" rel="noreferrer">{name}<ArrowRight size={15}/></a>)}</div>}</article></section>
+    </main>
+  </div>;
+}
+
 function App() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminGateOpen, setAdminGateOpen] = useState(() => window.location.pathname === '/admin');
@@ -923,7 +967,7 @@ function App() {
   const [adminSession, setAdminSession] = useState(null);
   const [managedProducts, setManagedProducts] = useState(() => JSON.parse(localStorage.getItem('oiwatch-products') || '[]').slice(0, 24));
   const [siteSettings, setPublicSiteSettings] = useState(() => JSON.parse(localStorage.getItem('oiwatch-site-settings') || '{"storeName":"OiWatch","whatsapp":"+852 6651 0124","defaultCurrency":"USD","eurRate":0.92}'));
-  const [lang, setLang] = useState('en');
+  const [lang, setLang] = useState(() => localStorage.getItem('oiwatch-language') || 'en');
   const [menu, setMenu] = useState(false);
   const [selected, setSelected] = useState(null);
   const [sent, setSent] = useState(false);
@@ -932,6 +976,8 @@ function App() {
   const [brandPage, setBrandPage] = useState(null);
   const [catalogProduct, setCatalogProduct] = useState(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState(1);
+  const [checkoutDetails, setCheckoutDetails] = useState(null);
   const [allProductsOpen, setAllProductsOpen] = useState(() => window.location.pathname.startsWith('/shop'));
   const [shopProductId, setShopProductId] = useState(() => {
     const match = window.location.pathname.match(/^\/shop\/product\/(.+)$/);
@@ -940,10 +986,13 @@ function App() {
   const [shopBrand, setShopBrand] = useState('all');
   const [remoteShopProduct, setRemoteShopProduct] = useState(null);
   const [qualityOpen, setQualityOpen] = useState(false);
+  const [paymentGuideOpen, setPaymentGuideOpen] = useState(false);
+  const [paymentGuideTab, setPaymentGuideTab] = useState('why');
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderError, setOrderError] = useState('');
   const [paymentAsset, setPaymentAsset] = useState('USDT');
+  const [paymentMethod, setPaymentMethod] = useState('crypto');
   const [paymentInvoice, setPaymentInvoice] = useState(null);
   const [paymentProofStatus, setPaymentProofStatus] = useState('');
   const [paymentTxid, setPaymentTxid] = useState('');
@@ -954,11 +1003,18 @@ function App() {
   const t = copy[lang];
   const m = microcopy[lang];
   const q = qualityCopy[lang];
+  const countryOptions = useMemo(() => {
+    try {
+      const names = new Intl.DisplayNames(['en'], { type:'region' });
+      return ISO_COUNTRY_CODES.map(code => ({ code, name:names.of(code) })).filter(item => item.name).sort((a,b) => a.name.localeCompare(b.name, 'en'));
+    } catch { return []; }
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = { zh:'zh-CN', en:'en', ja:'ja', ko:'ko', fr:'fr', de:'de', es:'es' }[lang];
-    document.body.style.overflow = selected || menu || cartOpen || brandPage || checkoutOpen || allProductsOpen || qualityOpen || adminGateOpen ? 'hidden' : '';
-  }, [lang, selected, menu, cartOpen, brandPage, checkoutOpen, allProductsOpen, qualityOpen, adminGateOpen]);
+    localStorage.setItem('oiwatch-language', lang);
+    document.body.style.overflow = selected || menu || cartOpen || brandPage || checkoutOpen || allProductsOpen || qualityOpen || paymentGuideOpen || adminGateOpen ? 'hidden' : '';
+  }, [lang, selected, menu, cartOpen, brandPage, checkoutOpen, allProductsOpen, qualityOpen, paymentGuideOpen, adminGateOpen]);
 
   useEffect(() => {
     localStorage.setItem('oiwatch-products', JSON.stringify(managedProducts.slice(0, 24)));
@@ -1063,39 +1119,26 @@ function App() {
     maximumFractionDigits: 0,
   }).format(Number(value));
   const allStoreProducts = [
-    ...managedProducts.filter(product => product.status === 'published').map(product => ({ ...product, tags:deriveProductTags(product), sortDate:product.updatedAt || new Date().toISOString(), displayName:lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.nameZh, displayBrand:lang === 'zh' ? product.brandZh : product.brandEn, description:lang === 'zh' ? product.descriptionZh : product.translations?.[lang]?.description || product.descriptionZh, mediaUrls:product.media?.map(media => ({ url:media.url, type:media.type })) || [], cartItem:{ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true } })),
-    ...demoProducts.map(product => ({ ...product, sortDate:product.updatedAt, displayName:lang === 'zh' ? product.nameZh : product.nameEn, displayBrand:lang === 'zh' ? product.brandZh : product.brandEn, description:lang === 'zh' ? product.descriptionZh : product.descriptionEn, mediaUrls:product.media.map(media => ({ url:media.url, type:media.type })), cartItem:{ ...product, image:product.media[0].url, customManaged:true } })),
-    ...watches.map((watch,index) => { const content=getWatchContent(watch.id,lang); return { id:watch.id, sortDate:`2026-07-${20-index}T10:00:00Z`, displayName:content.name, displayBrand:content.collection, description:content.description, price:({aurelia:3200,celeste:4200,monolith:2600})[watch.id], stock:1, mediaUrls:[{url:watch.image,type:'image/jpeg'}], cartItem:watch }; }),
+    ...managedProducts.filter(product => product.status === 'published').map(product => ({ ...product, tags:deriveProductTags(product), sortDate:product.updatedAt || new Date().toISOString(), displayName:lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece', displayBrand:lang === 'zh' ? product.brandZh : product.brandEn || 'OiWatch', description:lang === 'zh' ? product.descriptionZh : product.translations?.[lang]?.description || product.descriptionEn || product.translations?.en?.description || 'Product information is being prepared.', mediaUrls:product.media?.map(media => ({ url:media.url, type:media.type })) || [], cartItem:{ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true } })),
   ].sort((a,b) => new Date(b.sortDate)-new Date(a.sortDate));
   const submitOrder = async event => {
     event.preventDefault();
     setOrderSubmitting(true);
     setOrderError('');
-    const formData = new FormData(event.currentTarget);
+    if (!checkoutDetails) return;
     try {
       const orderNumber = `OI-${Date.now().toString(36).toUpperCase()}`;
-      await createOrder({
-        order_number: orderNumber,
-        customer_name: formData.get('customerName'),
-        email: formData.get('email'),
-        phone: formData.get('phone'),
-        street_address: formData.get('streetAddress'),
-        city: formData.get('city'),
-        country: formData.get('country'),
-        currency: 'USD',
-        total: cartTotal,
-        items: cart.map(item => ({
+      const items = cart.map(item => ({
           id:item.id,
           quantity:item.quantity,
           unitPrice:itemPrice(item),
           name:item.nameEn || item.nameZh || item.id,
-        })),
-        status: 'pending',
-      });
+        }));
+      const orderTotal = paymentMethod === 'cod' ? Math.round(cartTotal * 1.1 * 100) / 100 : cartTotal;
       const paymentResponse = await fetch('/.netlify/functions/create-crypto-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: orderNumber, amountUsd: cartTotal, asset: paymentAsset }),
+        body: JSON.stringify({ orderId: orderNumber, amountUsd: paymentMethod === 'cod' ? 40 : cartTotal, orderTotal, asset: paymentAsset, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod }),
       });
       const payment = await paymentResponse.json().catch(() => null);
       if (!paymentResponse.ok) throw new Error(payment?.error || 'Unable to create a crypto payment.');
@@ -1106,6 +1149,14 @@ function App() {
     } finally {
       setOrderSubmitting(false);
     }
+  };
+  const confirmDeliveryDetails = event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    if (['customerName','email','phone','country','streetAddress','postalCode'].some(key => !String(data.get(key) || '').trim())) { setOrderError('Please complete every contact and delivery field.'); return; }
+    setCheckoutDetails(Object.fromEntries(data.entries()));
+    setCheckoutStep(2);
+    setOrderError('');
   };
   const submitPaymentProof = async event => {
     event.preventDefault();
@@ -1211,16 +1262,16 @@ function App() {
       <header className="nav">
         <button className="menu-btn" onClick={() => setMenu(true)} aria-label="菜单"><Menu size={21}/></button>
         <SiteLogo onClick={() => scrollTo('home')}/>
-        <nav>{t.nav.slice(0, 3).map((item, i) => <button key={item} onClick={() => scrollTo(['collection','brands','story'][i])}>{item}</button>)}<button onClick={() => setQualityOpen(true)}>{q.nav}</button></nav>
+        <nav><button onClick={openShop}>{lang === 'zh' ? '全部商品' : 'All watches'}</button><button onClick={() => scrollTo('brands')}>{lang === 'zh' ? '品牌' : 'Maisons'}</button><button onClick={() => scrollTo('story')}>{lang === 'zh' ? '我们的故事' : 'Our story'}</button><button onClick={() => setPaymentGuideOpen(true)}>{lang === 'zh' ? '付款说明' : 'Payment guide'}</button></nav>
         <div className="nav-actions">
           <label className="language-picker"><Globe2 size={15}/><select value={lang} onChange={event => setLang(event.target.value)} aria-label={m.language}>{languageOptions.map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></label>
-          <button className={`cart-trigger ${cartPulse ? 'cart-pulse' : ''}`} onClick={() => setCartOpen(true)} aria-label={m.cart}><ShoppingBag size={17}/><span>{cartCount}</span></button>
+          <button className={`cart-trigger cart-prominent ${cartPulse ? 'cart-pulse' : ''}`} onClick={() => setCartOpen(true)} aria-label={m.cart}><ShoppingBag size={21}/><b>{lang === 'zh' ? '购物车' : 'Bag'}</b><span>{cartCount}</span></button>
           <button className="enquire" onClick={openWhatsApp}>{m.enquire}</button>
         </div>
       </header>
 
       <main>
-        <section className="commerce-hero" id="home">
+        <section className="commerce-hero legacy-hero" id="home">
           <div className="bestseller-slider">
             {watches.map((watch, index) => {
               const content = getWatchContent(watch.id, lang);
@@ -1247,7 +1298,7 @@ function App() {
           </div>
         </section>
 
-        <section className="collection section" id="collection">
+        <section className="collection section immersive-collection" id="collection" onMouseMove={event => { const box = event.currentTarget.getBoundingClientRect(); event.currentTarget.style.setProperty('--pointer-x', `${((event.clientX - box.left) / box.width) * 100}%`); event.currentTarget.style.setProperty('--pointer-y', `${((event.clientY - box.top) / box.height) * 100}%`); }}>
           <div className="section-heading">
             <div><p className="kicker">{t.featured}</p><h2>{t.sectionTitle}</h2></div>
             <p>{t.sectionText}</p>
@@ -1256,14 +1307,14 @@ function App() {
             <span>{m.swipe}</span>
           </div>
           <div className="watch-grid" ref={watchRail}>
-            {managedProducts.filter(product => product.status === 'published').map((product, i) => (
-              <article className="watch-card managed-card" key={product.id}>
+            {managedProducts.filter(product => product.status === 'published').slice(0, 8).map((product, i) => (
+              <article className="watch-card managed-card" key={product.id} role="button" tabIndex="0" onClick={() => openShopProduct(catalogDisplayProduct(product, lang))} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openShopProduct(catalogDisplayProduct(product, lang)); } }}>
                 <div className="card-index">{lang === 'zh' ? '新品' : 'NEW'}</div>
-                {product.media?.[0]?.type?.startsWith('video') ? <video src={product.media[0].url} muted loop autoPlay playsInline preload="metadata"/> : <img src={optimizedImage(product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', 760)} loading={i > 2 ? 'lazy' : 'eager'} decoding="async" alt={lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.nameZh}/>}
-                <div className="card-info"><p>{lang === 'zh' ? product.brandZh : product.brandEn}</p><h3>{lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.nameZh}</h3><span>{money(product.price)}</span><div className="card-actions"><button onClick={() => openShopProduct(catalogDisplayProduct(product, lang))}>{t.view}<ArrowRight size={15}/></button><button className="add-cart" onClick={() => addToCart({ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true })}><ShoppingBag size={14}/>{m.add}</button></div></div>
+                {product.media?.[0]?.type?.startsWith('video') ? <video src={product.media[0].url} muted loop autoPlay playsInline preload="metadata"/> : <img src={optimizedImage(product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', 760)} loading={i > 2 ? 'lazy' : 'eager'} decoding="async" alt={lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece'}/>} 
+                <div className="card-info"><p>{lang === 'zh' ? product.brandZh : product.brandEn || 'OiWatch'}</p><h3>{lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece'}</h3><span>{money(product.price)}</span><div className="card-actions"><button onClick={() => openShopProduct(catalogDisplayProduct(product, lang))}>{t.view}<ArrowRight size={15}/></button><button className="add-cart" onClick={() => addToCart({ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true })}><ShoppingBag size={14}/>{m.add}</button></div></div>
               </article>
             ))}
-            {watches.map((watch, i) => {
+            {false && watches.map((watch, i) => {
               const content = getWatchContent(watch.id, lang);
               return (
               <article className={`watch-card ${watch.tone}`} key={watch.id}>
@@ -1347,7 +1398,9 @@ function App() {
         <span>© 2026 OIWATCH</span>
       </footer>
 
-      {menu && <div className="mobile-menu"><button className="close" onClick={() => setMenu(false)}><X/></button><SiteLogo/>{t.nav.slice(0, 3).map((item, i) => <button key={item} onClick={() => scrollTo(['collection','brands','story'][i])}>{item}</button>)}<button onClick={() => { setMenu(false); setQualityOpen(true); }}>{q.nav}</button><label className="language-picker"><Globe2/><select value={lang} onChange={event => setLang(event.target.value)}>{languageOptions.map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></label></div>}
+      {menu && <div className="mobile-menu"><button className="close" onClick={() => setMenu(false)}><X/></button><SiteLogo/><button onClick={() => { setMenu(false); openShop(); }}>{lang === 'zh' ? '全部商品' : 'All watches'}</button><button onClick={() => scrollTo('brands')}>{lang === 'zh' ? '品牌' : 'Maisons'}</button><button onClick={() => scrollTo('story')}>{lang === 'zh' ? '我们的故事' : 'Our story'}</button><button onClick={() => { setMenu(false); setPaymentGuideOpen(true); }}>{lang === 'zh' ? '付款说明' : 'Payment guide'}</button><label className="language-picker"><Globe2/><select value={lang} onChange={event => setLang(event.target.value)}>{languageOptions.map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></label></div>}
+
+      {paymentGuideOpen && <PaymentGuide lang={lang} activeTab={paymentGuideTab} setActiveTab={setPaymentGuideTab} onClose={() => setPaymentGuideOpen(false)}/>} 
 
       {adminGateOpen && <div className="admin-gate-backdrop" onClick={() => setAdminGateOpen(false)}>
         <form className="admin-gate" onSubmit={verifyAdminLogin} onClick={event => event.stopPropagation()}>
@@ -1483,7 +1536,7 @@ function App() {
             {cart.length === 0
               ? <div className="empty-cart"><ShoppingBag/><p>{lang === 'zh' ? '购物车目前为空' : 'Your shopping bag is empty'}</p><button onClick={() => setCartOpen(false)}>{lang === 'zh' ? '继续浏览' : 'Continue browsing'}</button></div>
               : cart.map(item => {
-                const content = item.customManaged ? { collection:lang === 'zh' ? item.brandZh : item.brandEn, name:lang === 'zh' ? item.nameZh : item.translations?.[lang]?.name || item.nameEn || item.nameZh, subtitle:money(item.price) } : item.customMeta ? {
+                const content = item.customManaged ? { collection:lang === 'zh' ? item.brandZh : item.brandEn || 'OiWatch', name:lang === 'zh' ? item.nameZh : item.translations?.[lang]?.name || item.nameEn || item.translations?.en?.name || 'Selected timepiece', subtitle:money(item.price) } : item.customMeta ? {
                   collection: lang === 'zh' ? item.customMeta.brand.zh : item.customMeta.brand.en,
                   name: (lang === 'zh' ? item.customMeta.brand.zhLines : item.customMeta.brand.enLines)[item.customMeta.lineIndex],
                   subtitle: lang === 'zh' ? (item.customMeta.rare ? '珍罕配置' : '经典精选') : (item.customMeta.rare ? 'Rare configuration' : 'Signature selection'),
@@ -1513,8 +1566,8 @@ function App() {
       {checkoutOpen && <div className="checkout-page">
         <header className="checkout-header"><SiteLogo/><button onClick={() => setCheckoutOpen(false)}><X size={18}/>{lang === 'zh' ? '返回购物车' : 'Return to bag'}</button></header>
         {orderPlaced && paymentInvoice && <div className="order-success crypto-payment">
-          <ShieldCheck/><p>CRYPTO PAYMENT</p><h2>Scan to complete payment</h2>
-          <span>Order {paymentInvoice.orderId}. Pay using {paymentInvoice.asset} only.</span>
+          <ShieldCheck/><p>{paymentMethod === 'cod' ? 'COD SHIPPING PAYMENT' : 'CRYPTO PAYMENT'}</p><h2>{paymentMethod === 'cod' ? 'Pay $40 shipping to confirm COD' : 'Scan to complete payment'}</h2>
+          <span>{paymentMethod === 'cod' ? `Order ${paymentInvoice.orderId}. This payment covers shipping only; the remaining balance is due on delivery.` : `Order ${paymentInvoice.orderId}. Pay using ${paymentInvoice.asset} only.`}</span>
           {paymentInvoice.qrCode ? <><img className="payment-qr" src={paymentInvoice.qrCode} alt="Payment QR code"/><a className="payment-copy" href={paymentInvoice.qrCode} download={`oiwatch-${paymentInvoice.orderId}-${paymentInvoice.asset}-qr.png`}>Save QR code</a></> : <div className="payment-qr-placeholder">QR code unavailable</div>}
           <strong className="payment-due">{paymentInvoice.amountCoin ? `${paymentInvoice.amountCoin} ${paymentInvoice.asset}` : paymentInvoice.asset}</strong>
           <code className="payment-address">{paymentInvoice.address}</code>
@@ -1530,13 +1583,16 @@ function App() {
           <button className="primary" onClick={() => { setOrderPlaced(false); setPaymentInvoice(null); setCheckoutOpen(false); setCart([]); }}>Done</button>
         </div>}        {orderPlaced && !paymentInvoice ? <div className="order-success"><ShieldCheck/><p>{lang === 'zh' ? '订单已提交' : 'ORDER SUBMITTED'}</p><h2>{lang === 'zh' ? '感谢您的选购' : 'Thank you for your order'}</h2><span>{lang === 'zh' ? '专属顾问将通过 WhatsApp 或电子邮件确认库存、配送和付款安排。网站不会收集银行卡资料。' : 'Your advisor will confirm availability, delivery and payment arrangements by WhatsApp or email. This website does not collect card details.'}</span><button className="primary" onClick={() => { setOrderPlaced(false); setCheckoutOpen(false); setCart([]); }}>{lang === 'zh' ? '返回首页' : 'Return home'}</button></div>
         : <div className="checkout-layout">
-          <form className="payment-form" onSubmit={submitOrder}>
-            <p>{lang === 'zh' ? '订单咨询' : 'ORDER REQUEST'}</p><h1>{lang === 'zh' ? '联系与配送资料' : 'Contact & delivery'}</h1>
+          {checkoutStep === 1 ? <form className="payment-form delivery-form" noValidate onSubmit={confirmDeliveryDetails}>
+            <p>{lang === 'zh' ? '第 1 步 / 配送地址' : 'STEP 1 / DELIVERY ADDRESS'}</p><h1>{lang === 'zh' ? '先确认配送地址' : 'Confirm your delivery address'}</h1>
             <fieldset><legend>{lang === 'zh' ? '联系资料' : 'Contact details'}</legend><div className="form-row"><input name="customerName" required placeholder={lang === 'zh' ? '姓名' : 'Full name'}/><input name="email" required type="email" placeholder={lang === 'zh' ? '电子邮箱' : 'Email address'}/></div><input name="phone" required placeholder={lang === 'zh' ? '联系电话' : 'Phone number'}/></fieldset>
-            <fieldset><legend>{lang === 'zh' ? '配送地址' : 'Delivery address'}</legend><input name="streetAddress" required placeholder={lang === 'zh' ? '详细地址' : 'Street address'}/><div className="form-row"><input name="city" required placeholder={lang === 'zh' ? '城市' : 'City'}/><input name="country" required placeholder={lang === 'zh' ? '国家或地区' : 'Country or region'}/></div></fieldset>
-            <fieldset><legend>Payment asset & network</legend><div className="crypto-options">{[['USDT','TRC20'],['USDC','ERC20'],['BTC','Bitcoin'],['ETH','Ethereum'],['SOL','Solana']].map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div></fieldset>            {orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit" disabled={orderSubmitting}><ShieldCheck size={17}/>{orderSubmitting ? (lang === 'zh' ? '正在提交订单…' : 'Submitting order…') : (lang === 'zh' ? `提交订单 ${money(cartTotal)}` : `Submit order ${money(cartTotal)}`)}</button><small>{lang === 'zh' ? '提交后客服将通过 WhatsApp 或电子邮件联系您。本网站不会要求或储存银行卡号码、安全码或有效期。' : 'After submission, support will contact you by WhatsApp or email. This website never requests or stores card numbers, security codes or expiry dates.'}</small>
-          </form>
-          <aside className="order-summary"><h2>{lang === 'zh' ? '订单摘要' : 'Order summary'}</h2>{cart.map(item => { const content = item.customManaged ? { name:lang==='zh'?item.nameZh:item.translations?.[lang]?.name||item.nameEn||item.nameZh, collection:lang==='zh'?item.brandZh:item.brandEn } : item.customMeta ? { name:(lang==='zh'?item.customMeta.brand.zhLines:item.customMeta.brand.enLines)[item.customMeta.lineIndex], collection:lang==='zh'?item.customMeta.brand.zh:item.customMeta.brand.en } : getWatchContent(item.id,lang); return <article key={item.id}><img src={item.image} alt={content.name}/><div><span>{content.collection}</span><h3>{content.name}</h3><p>{lang==='zh'?'数量':'Quantity'}：{item.quantity}</p></div><strong>{money(itemPrice(item)*item.quantity)}</strong></article>})}<div className="summary-total"><span>{lang==='zh'?'订单合计':'Order total'}</span><strong>{money(cartTotal)}</strong></div></aside>
+            <fieldset><legend>{lang === 'zh' ? '配送地址' : 'Delivery address'}</legend><select className="checkout-country" name="country" required defaultValue=""><option value="" disabled>{lang === 'zh' ? '选择国家或地区' : 'Select country or region'}</option>{countryOptions.map(item => <option key={item.code} value={item.name}>{item.name}</option>)}</select><textarea name="streetAddress" required rows="6" placeholder={lang === 'zh' ? '详细地址：街道、门牌号、公寓/楼层等' : 'Full address: street, building number, apartment or floor'}/><input name="postalCode" required placeholder={lang === 'zh' ? '邮政编码' : 'Postal code'}/></fieldset>
+            {orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit"><ArrowRight size={17}/>{lang === 'zh' ? '确认地址，下一步' : 'Confirm address & continue'}</button>
+          </form> : <form className="payment-form" onSubmit={submitOrder}>
+            <p>{lang === 'zh' ? '第 2 步 / 付款方式' : 'STEP 2 / PAYMENT METHOD'}</p><h1>{lang === 'zh' ? '选择付款方式' : 'Choose payment method'}</h1>
+            <fieldset><legend>{lang === 'zh' ? '付款方式' : 'Payment method'}</legend><div className="payment-method-options"><label><input type="radio" checked={paymentMethod === 'crypto'} onChange={() => setPaymentMethod('crypto')}/><span><strong>{lang === 'zh' ? '加密货币' : 'Cryptocurrency'}</strong><small>{lang === 'zh' ? '按链上金额付款' : 'Pay the order amount on-chain'}</small></span></label><label><input type="radio" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')}/><span><strong>{lang === 'zh' ? '货到付款' : 'Cash on delivery'}</strong><small>{lang === 'zh' ? '总额加 10%，先付 $40 运费' : '10% service fee; $40 shipping paid first'}</small></span></label></div></fieldset>{paymentMethod === 'crypto' ? <fieldset><legend>{lang === 'zh' ? '加密货币' : 'Cryptocurrency'}</legend><div className="crypto-options">{[['USDT','TRC20'],['USDC','ERC20'],['BTC','Bitcoin'],['ETH','Ethereum'],['SOL','Solana']].map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div></fieldset> : <div className="cod-summary"><strong>{lang === 'zh' ? '货到付款结算' : 'Cash-on-delivery breakdown'}</strong><span>{lang === 'zh' ? `订单总额（含 10% 服务费）：${money(cartTotal * 1.1)}` : `Order total with 10% service fee: ${money(cartTotal * 1.1)}`}</span><span>{lang === 'zh' ? '现在需支付运费：$40' : 'Shipping due now: $40'}</span><span>{lang === 'zh' ? `签收时支付余额：${money(Math.max(0, cartTotal * 1.1 - 40))}` : `Balance due on delivery: ${money(Math.max(0, cartTotal * 1.1 - 40))}`}</span></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit" disabled={orderSubmitting}><ShieldCheck size={17}/>{orderSubmitting ? (lang === 'zh' ? '正在创建付款…' : 'Creating payment…') : paymentMethod === 'cod' ? (lang === 'zh' ? '支付 $40 运费并确认货到付款' : 'Pay $40 shipping & confirm COD') : (lang === 'zh' ? `确认并创建付款 ${money(cartTotal)}` : `Confirm & create payment ${money(cartTotal)}`)}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(1)}>{lang === 'zh' ? '返回修改地址' : 'Back to address'}</button>
+          </form>}
+          <aside className="order-summary"><h2>{lang === 'zh' ? '订单摘要' : 'Order summary'}</h2>{cart.map(item => { const content = item.customManaged ? { name:lang==='zh'?item.nameZh:item.translations?.[lang]?.name||item.nameEn||item.translations?.en?.name||'Selected timepiece', collection:lang==='zh'?item.brandZh:item.brandEn||'OiWatch' } : item.customMeta ? { name:(lang==='zh'?item.customMeta.brand.zhLines:item.customMeta.brand.enLines)[item.customMeta.lineIndex], collection:lang==='zh'?item.customMeta.brand.zh:item.customMeta.brand.en } : getWatchContent(item.id,lang); return <article key={item.id}><img src={item.image} alt={content.name}/><div><span>{content.collection}</span><h3>{content.name}</h3><p>{lang==='zh'?'数量':'Quantity'}：{item.quantity}</p></div><strong>{money(itemPrice(item)*item.quantity)}</strong></article>})}<div className="summary-total"><span>{lang==='zh'?'订单合计':'Order total'}</span><strong>{money(cartTotal)}</strong></div></aside>
         </div>}
       </div>}
     </>

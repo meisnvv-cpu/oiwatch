@@ -21,6 +21,17 @@ async function paymentRecord(method, path, body) {
   return response.status === 204 ? null : response.json();
 }
 
+async function createOrder(input, orderId, total) {
+  const customer = input.customer || {};
+  const items = Array.isArray(input.items) ? input.items.slice(0, 50) : [];
+  if (!customer.name || !customer.email || !customer.phone || !customer.address || !customer.country || !customer.postalCode || !items.length) throw new Error('Invalid order details');
+  await paymentRecord('POST', 'orders', {
+    order_number:orderId, customer_name:String(customer.name).slice(0,160), email:String(customer.email).slice(0,200), phone:String(customer.phone).slice(0,80),
+    street_address:String(customer.address).slice(0,1200), city:String(customer.postalCode).slice(0,40), country:String(customer.country).slice(0,120),
+    currency:'USD', total, items, status:'pending',
+  });
+}
+
 export async function handler(event) {
   if (event.httpMethod !== 'POST') return reply(405, { error: 'Method not allowed' });
   let input;
@@ -28,7 +39,8 @@ export async function handler(event) {
   const asset = ASSETS[String(input.asset || '').toUpperCase()];
   const orderId = String(input.orderId || '');
   const amountUsd = Number(input.amountUsd);
-  if (!asset || !/^[A-Z0-9-]{8,80}$/.test(orderId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return reply(400, { error: 'Invalid payment request' });
+  const orderTotal = Number(input.orderTotal || amountUsd);
+  if (!asset || !/^[A-Z0-9-]{8,80}$/.test(orderId) || !Number.isFinite(amountUsd) || amountUsd <= 0 || !Number.isFinite(orderTotal) || orderTotal < amountUsd) return reply(400, { error: 'Invalid payment request' });
 
   const address = process.env[asset.addressEnv];
   const siteUrl = String(process.env.PUBLIC_SITE_URL || '').replace(/\/+$/, '');
@@ -42,6 +54,7 @@ export async function handler(event) {
   endpoint.searchParams.set('confirmations', '1');
 
   try {
+    await createOrder(input, orderId, orderTotal);
     const response = await fetch(endpoint);
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.address_in) return reply(502, { error: 'Unable to create a crypto payment address' });

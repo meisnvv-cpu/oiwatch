@@ -9,3 +9,5 @@ deploy-*/
 .codex/
 eng.traineddata
 .env
+preview.log
+vite-*.log
