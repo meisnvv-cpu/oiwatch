@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowDown, ArrowLeft, ArrowRight, ChevronRight, Clock3, Globe2, Instagram, Menu, MessageCircle, Minus, Play, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, Box, ChevronRight, Clock3, CreditCard, ExternalLink, Globe2, Instagram, Menu, MessageCircle, Minus, PackageCheck, Play, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import './styles.css';
 import { deleteAdminProduct, getAdminSession, getPublishedProduct, getSiteSettings, listAdminCustomers, listAdminOrders, listAdminProducts, listPublishedBrands, listPublishedProducts, listPublishedProductsPage, saveAdminProduct, saveSiteSettings, signInAdmin, signOutAdmin, uploadAdminMedia } from './supabase.js';
+import { getCommerceCopy } from './commerce-copy.js';
 
 const watches = [
   {
@@ -107,7 +108,7 @@ const brandCatalog = [
   { en: 'Montblanc', zh: '万宝龙', enLines: ['1858', 'Star Legacy', 'Bohème', 'Heritage'], zhLines: ['一八五八', '明星传承', '宝曦', '传承'] },
   { en: 'Baume & Mercier', zh: '名士表', enLines: ['Riviera', 'Clifton', 'Hampton', 'Classima'], zhLines: ['利维拉', '克里顿', '汉伯顿', '克莱斯麦'] },
   { en: 'Longines', zh: '浪琴表', enLines: ['Spirit', 'Master Collection', 'Conquest', 'DolceVita'], zhLines: ['先行者', '名匠', '康卡斯', '黛绰维纳'] },
-  { en: 'Oris', zh: '豪利时', enLines: ['Aquis', 'Divers', 'Big Crown', 'ProPilot'], zhLines: ['潜水', '复刻潜水', '大表冠', '航空'] },
+  { en: 'Oris', zh: '豪利时', enLines: ['Aquis', 'Divers Sixty-Five', 'Big Crown', 'ProPilot'], zhLines: ['Aquis 潜水系列', 'Divers Sixty-Five 潜水复古系列', '大表冠', '航空'] },
   { en: 'NOMOS Glashütte', zh: '诺莫斯', enLines: ['Tangente', 'Club', 'Metro', 'Ludwig'], zhLines: ['切线', '俱乐部', '都市', '路德维希'] },
   { en: 'Frederique Constant', zh: '康斯登', enLines: ['Manufacture', 'Highlife', 'Classics', 'Slimline'], zhLines: ['自家机芯', '百年典雅', '经典', '超薄'] },
   { en: 'Carl F. Bucherer', zh: '宝齐莱', enLines: ['Manero', 'Patravi', 'Heritage', 'Adamavi'], zhLines: ['马利龙', '柏拉维', '传承', '爱德玛尔'] },
@@ -194,18 +195,137 @@ function SiteLogo({ className = '', ...props }) {
   </a>;
 }
 
-const factoryTagPattern = /\b(CLEAN(?:\s+FACTORY)?|VSF|VS\s+FACTORY|APSF|APS|PPF|ZF|BTF|QF|THBF?|BVF|JBF|AF|GMF|ARF|CF|3KF?|EWF|GSF|MKS|N6F|OMF|ORF|TWF?|V9F|YLF|YSF|VRF|WWF)\b/i;
 const modelTagPattern = /\b(RM\s?\d{2,3}(?:[- ]\d{1,3})?|PAM\s?\d{3,4}|IW\s?\d{5,8}|BR\s?\d{2}(?:[- ]?[A-Z0-9]+)?|[A-Z]{0,3}\d{4,6}[A-Z]{0,3})\b/i;
+const CART_STORAGE_KEY = 'oiwatch-cart-v3';
+const CHECKOUT_STORAGE_KEY = 'oiwatch-checkout-details-v1';
+const CHECKOUT_FLOW_STORAGE_KEY = 'oiwatch-checkout-flow-v1';
+const cjkPattern = /[\u3400-\u9fff]+/g;
+const prohibitedCatalogueTermsPattern = /(?:replica|super\s*clone|clone|aaa|vsf|apsf?|ppf|clean|zf|qf|twf|factory|复刻|仿表|克隆|工厂|厂新品)/i;
+const anyCjkPattern = /[\u3400-\u9fff]/;
+const japaneseKanaPattern = /[\u3040-\u30ff]/;
+
+function formatCopy(value, variables = {}) {
+  return Object.entries(variables).reduce(
+    (result, [key, replacement]) => result.replaceAll(`{${key}}`, String(replacement)),
+    String(value || ''),
+  );
+}
+
+function readStoredCart() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || '[]');
+    return Array.isArray(value) ? value.filter(item => item && item.id && Number(item.quantity || 0) > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readStoredCheckoutDetails() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CHECKOUT_STORAGE_KEY) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredCheckoutFlow() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CHECKOUT_FLOW_STORAGE_KEY) || 'null');
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function cleanLocalizedText(value, lang) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (lang === 'zh') return text;
+  if (lang === 'ja') {
+    if (!anyCjkPattern.test(text) || japaneseKanaPattern.test(text)) return text;
+    // A Japanese translation may combine kana and kanji. Pure Han text in
+    // this field is usually an untranslated Chinese import; retain only the
+    // model code or Latin brand text instead of exposing the wrong language.
+    return text
+      .replace(cjkPattern, ' ')
+      .replace(/[（(]\s*[)）]/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+  // Imported records often repeat Chinese after an English model name. Keep a
+  // single readable language rather than exposing a mixed-language title.
+  return text
+    .replace(cjkPattern, ' ')
+    .replace(/[（(]\s*[)）]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;:])/g, '$1')
+    .trim();
+}
+
+function localizedProductValue(product, lang, field) {
+  const candidate = lang === 'zh'
+    ? (field === 'name' ? product.nameZh : product.descriptionZh)
+    : lang === 'en'
+      ? product.translations?.en?.[field] || (field === 'name' ? product.nameEn : product.descriptionEn)
+      : product.translations?.[lang]?.[field];
+  const english = product.translations?.en?.[field] || (field === 'name' ? product.nameEn : product.descriptionEn);
+  const source = lang !== 'zh' && lang !== 'en'
+    && String(candidate || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase()
+      === String(english || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase()
+    ? ''
+    : candidate;
+  const fallbacks = {
+    zh:{ name:'精选腕表', description:'商品资料正在整理中。' },
+    en:{ name:'Selected timepiece', description:'Product information is being prepared.' },
+    ja:{ name:'厳選腕時計', description:'商品情報を準備しています。' },
+    ko:{ name:'엄선된 시계', description:'상품 정보를 준비하고 있습니다.' },
+    fr:{ name:'Montre sélectionnée', description:'Les informations produit sont en cours de préparation.' },
+    de:{ name:'Ausgewählte Uhr', description:'Die Produktinformationen werden vorbereitet.' },
+    es:{ name:'Reloj seleccionado', description:'La información del producto se está preparando.' },
+  };
+  const brand = cleanLocalizedText(lang === 'zh' ? product.brandZh : product.brandEn, lang) || 'OiWatch';
+  const modelSource = [product.nameEn, ...(product.tags || [])]
+    .map(value => cleanLocalizedText(value, lang))
+    .find(value => value && /[A-Za-z0-9]/.test(value) && !prohibitedCatalogueTermsPattern.test(value));
+  const model = modelSource || '';
+  const generated = {
+    zh:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''} 商品资料；具体配置、状态、包装与随附文件以单件商品及订单确认为准。` },
+    en:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''}. The exact configuration, condition, packaging, and included documents are confirmed for the individual item and order.` },
+    ja:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''}。正確な仕様、状態、包装、付属書類は商品ごと・注文ごとに確認されます。` },
+    ko:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''}. 정확한 사양, 상태, 포장 및 동봉 서류는 상품과 주문별로 확인됩니다.` },
+    fr:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''}. La configuration, l'etat, l'emballage et les documents inclus sont confirmes pour chaque article et commande.` },
+    de:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''}. Konfiguration, Zustand, Verpackung und Unterlagen werden fur jeden Artikel und Auftrag bestatigt.` },
+    es:{ name:[brand, model].filter(Boolean).join(' '), description:`${brand}${model ? ` ${model}` : ''}. La configuracion, el estado, el embalaje y los documentos se confirman para cada articulo y pedido.` },
+  };
+  const generatedValue = generated[lang]?.[field];
+  return cleanLocalizedText(source, lang) || generatedValue || fallbacks[lang]?.[field] || fallbacks.en[field];
+}
 
 function deriveProductTags(product) {
-  const title = `${product.nameZh || ''} ${product.nameEn || ''}`;
+  const title = `${product.nameZh || ''} ${product.nameEn || ''} ${product.descriptionZh || ''} ${product.descriptionEn || ''}`;
+  const modelMatches = [...title.matchAll(new RegExp(modelTagPattern.source, 'gi'))].map(match => match[1]);
   return [...new Set([
     ...(product.tags || []),
     product.brandEn,
     product.brandZh,
-    title.match(modelTagPattern)?.[1],
-    title.match(factoryTagPattern)?.[1],
+    ...modelMatches,
   ].map(tag => String(tag || '').trim()).filter(Boolean))];
+}
+
+function isVerifiedStoreProduct(product) {
+  if (product.sourceVerified === true) return true;
+  if (product.sourceVerified === false) return false;
+  return !String(product.id || '').startsWith('watclub-')
+    && !prohibitedCatalogueTermsPattern.test([
+      product.nameZh,
+      product.nameEn,
+      product.descriptionZh,
+      product.descriptionEn,
+      product.brandEn,
+      product.brandZh,
+      JSON.stringify(product.translations || {}),
+      ...(product.tags || []),
+    ].join(' '));
 }
 
 function getWatchContent(id, lang) {
@@ -361,7 +481,7 @@ function VisualEditor() {
 }
 
 function AdminDashboard({ products, setProducts, onClose, session }) {
-  const emptyForm = { id:null, nameZh:'', nameEn:'', descriptionZh:'', translations:{}, brandEn:brands[0].en, price:'', stock:'1', status:'published', media:[], tags:[] };
+  const emptyForm = { id:null, nameZh:'', nameEn:'', descriptionZh:'', translations:{}, brandEn:brands[0].en, price:'', stock:'1', status:'draft', media:[], tags:[], sourceVerified:false, sourceEvidenceNote:'' };
   const [form, setForm] = useState(emptyForm);
   const [translating, setTranslating] = useState(false);
   const [view, setView] = useState('products');
@@ -398,8 +518,12 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
   };
   const saveProduct = async event => {
     event.preventDefault();
+    if (form.status === 'published' && (!form.sourceVerified || !form.sourceEvidenceNote.trim())) {
+      setSaveError('发布前必须确认来源已核验，并填写不含敏感信息的供货依据摘要。');
+      return;
+    }
     const brand = brands.find(item => item.en === form.brandEn);
-    const productBase = { ...form, id:form.id || `product-${Date.now()}`, brandZh:brand.zh, price:Number(form.price), stock:Number(form.stock), updatedAt:new Date().toISOString() };
+    const productBase = { ...form, id:form.id || `product-${Date.now()}`, brandZh:brand.zh, price:Number(form.price), stock:Number(form.stock), sourceVerified:Boolean(form.sourceVerified), sourceEvidenceNote:form.sourceEvidenceNote.trim(), updatedAt:new Date().toISOString() };
     const product = { ...productBase, tags:deriveProductTags(productBase) };
     setSaving(true);
     setSaveError('');
@@ -500,7 +624,7 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
           <div className="table-head"><span>商品</span><span>状态</span><span>库存</span><span>价格</span><span>操作</span></div>
           {visible.length === 0 ? <div className="admin-empty"><ShoppingBag/><h2>尚未添加商品</h2><p>添加您的第一件腕表商品。</p><button onClick={()=>setView('editor')}>添加商品</button></div> : visible.map(product => <article key={product.id}>
             <div className="admin-product-name">{product.media?.[0]?.url ? <img src={product.media[0].url} alt=""/> : <div/>}<span><strong>{product.nameZh || product.nameEn}</strong><small>{product.brandZh} · {product.nameEn}</small></span></div>
-            <span className={`status ${product.status}`}>{product.status === 'published' ? '已发布' : '草稿'}</span><span>{product.stock}</span><span>US$ {Number(product.price).toLocaleString()}</span><div className="table-actions"><button onClick={()=>editProduct(product)}>编辑</button><button onClick={()=>removeProduct(product.id)}>删除</button></div>
+            <span className={`status ${product.status}`}>{product.status === 'published' && product.sourceVerified ? '已发布 · 来源已核验' : '待核验草稿'}</span><span>{product.stock}</span><span>US$ {Number(product.price).toLocaleString()}</span><div className="table-actions"><button onClick={()=>editProduct(product)}>编辑</button><button onClick={()=>removeProduct(product.id)}>删除</button></div>
           </article>)}
         </div>
       </> : <form className="product-editor" onSubmit={saveProduct}>
@@ -511,8 +635,9 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
           <section><h2>图片与视频</h2><label className={`media-drop ${uploading ? 'is-uploading' : ''}`}>＋ {uploading ? '正在上传…' : '上传图片或视频'}<input multiple disabled={uploading} type="file" accept="image/*,video/*" onChange={uploadFiles}/><span>支持多选，文件将安全上传到云端</span></label>{uploadStatus && <p className="media-upload-status">{uploadStatus}</p>}<div className="media-grid">{form.media.map((media,index)=><div key={media.id}>{media.type.startsWith('video')?<video src={media.url} controls/>:<img src={media.url} alt=""/>}<button type="button" onClick={()=>setForm(current=>({...current,media:current.media.filter((_,i)=>i!==index)}))}>×</button>{index===0&&<span>封面</span>}</div>)}</div>
           </section>
         </div><div>
-          <section><h2>销售资料</h2><label>价格（美元 USD）<input required min="0" step="0.01" type="number" value={form.price} onChange={event=>update('price',event.target.value)}/></label><label>库存数量<input required min="0" type="number" value={form.stock} onChange={event=>update('stock',event.target.value)}/></label><label>商品状态<select value={form.status} onChange={event=>update('status',event.target.value)}><option value="published">立即发布</option><option value="draft">保存草稿</option></select></label></section>
-          <section className="publish-note"><ShieldCheck/><div><strong>云端保存模式</strong><p>商品资料、库存和云端媒体将在所有设备之间同步。</p></div></section>
+          <section><h2>销售资料</h2><label>价格（美元 USD）<input required min="0" step="0.01" type="number" value={form.price} onChange={event=>update('price',event.target.value)}/></label><label>库存数量<input required min="0" type="number" value={form.stock} onChange={event=>update('stock',event.target.value)}/></label><label>商品状态<select value={form.status} onChange={event=>update('status',event.target.value)}><option value="draft">保存为待核验草稿</option><option value="published" disabled={!form.sourceVerified || !form.sourceEvidenceNote.trim()}>发布已核验商品</option></select></label></section>
+          <section className="source-verification-panel"><h2>授权经销与采购来源</h2><label className="source-verification-check"><input type="checkbox" checked={Boolean(form.sourceVerified)} onChange={event=>setForm(current=>({ ...current, sourceVerified:event.target.checked, status:event.target.checked ? current.status : 'draft' }))}/><span><strong>此商品的供货依据已逐件核验</strong><small>只在已经核对经销商、采购记录或相应供货文件时勾选；这不等于品牌直接授权 OiWatch。</small></span></label><label>供货依据摘要<textarea rows="4" value={form.sourceEvidenceNote || ''} onChange={event=>update('sourceEvidenceNote',event.target.value)} placeholder="例如：已核对授权经销商采购记录及本批次随货文件。请勿填写密码、密钥、完整证件号或其他敏感信息。"/></label><p className="section-help">只有勾选来源已核验并填写摘要后，才能选择发布。具体品牌保修、盒卡和授权文件仍以单件商品页及实际随货内容为准。</p></section>
+          <section className="publish-note"><ShieldCheck/><div><strong>授权经销商品发布门槛</strong><p>未核验商品会保留在云端草稿中，不会出现在公开目录或结算流程。</p></div></section>
         </div></div>
       </form>}
     </main>
@@ -520,13 +645,33 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
 }
 
 const microcopy = {
-  zh: { language:'语言', cart:'购物车', enquire:'联系 WhatsApp 客服', swipe:'左右滑动浏览', brands:'探索世界名表', byBrand:'按品牌探索', authenticated:'独立鉴证', expertise:'年专业经验', partners:'全球合作伙伴', add:'加入购物车', empty:'购物车目前为空', continue:'继续浏览', selected:'所选数量', checkout:'提交购买咨询', other:'其他 / 尚未确定', received:'已收到，我们将尽快联系您', consultation:'珍贵腕表价格及库存将由专属顾问确认。' },
-  en: { language:'Language', cart:'Shopping bag', enquire:'Contact WhatsApp support', swipe:'Swipe to explore', brands:'EXPLORE THE MAISONS', byBrand:'Discover by maison', authenticated:'Authenticated', expertise:'Years expertise', partners:'Global partners', add:'Add to bag', empty:'Your shopping bag is empty', continue:'Continue browsing', selected:'Selected pieces', checkout:'Request purchase consultation', other:'Other / Not decided', received:'Received — we will be in touch', consultation:'Availability and pricing will be confirmed by your private advisor.' },
-  ja: { language:'言語', cart:'ショッピングバッグ', enquire:'WhatsAppサポートへ連絡', swipe:'左右にスワイプ', brands:'世界のメゾン', byBrand:'ブランドから探す', authenticated:'独立鑑定', expertise:'年の専門経験', partners:'世界の提携先', add:'バッグに追加', empty:'バッグは空です', continue:'閲覧を続ける', selected:'選択数', checkout:'購入相談を依頼', other:'その他 / 未定', received:'承りました。追ってご連絡します', consultation:'在庫と価格は専任アドバイザーが確認します。' },
-  ko: { language:'언어', cart:'쇼핑백', enquire:'WhatsApp 고객센터 문의', swipe:'좌우로 밀어 보기', brands:'세계적인 메종', byBrand:'브랜드별 보기', authenticated:'독립 감정', expertise:'년 전문 경력', partners:'글로벌 파트너', add:'쇼핑백에 담기', empty:'쇼핑백이 비어 있습니다', continue:'계속 둘러보기', selected:'선택 수량', checkout:'구매 상담 요청', other:'기타 / 미정', received:'접수되었습니다. 곧 연락드리겠습니다', consultation:'재고와 가격은 전담 어드바이저가 확인합니다.' },
-  fr: { language:'Langue', cart:'Panier', enquire:'Contacter le support WhatsApp', swipe:'Faire défiler latéralement', brands:'MAISONS HORLOGÈRES', byBrand:'Découvrir par maison', authenticated:'Authentifié', expertise:'Ans d’expertise', partners:'Partenaires mondiaux', add:'Ajouter au panier', empty:'Votre panier est vide', continue:'Continuer', selected:'Pièces choisies', checkout:'Demander une consultation', other:'Autre / Indécis', received:'Demande reçue, nous vous contacterons', consultation:'Disponibilité et prix seront confirmés par votre conseiller.' },
-  de: { language:'Sprache', cart:'Warenkorb', enquire:'WhatsApp-Support kontaktieren', swipe:'Seitlich wischen', brands:'UHRENMARKEN ENTDECKEN', byBrand:'Nach Marke entdecken', authenticated:'Authentifiziert', expertise:'Jahre Erfahrung', partners:'Globale Partner', add:'In den Warenkorb', empty:'Ihr Warenkorb ist leer', continue:'Weiter entdecken', selected:'Ausgewählte Uhren', checkout:'Kaufberatung anfragen', other:'Andere / Unentschieden', received:'Anfrage erhalten, wir melden uns', consultation:'Verfügbarkeit und Preis bestätigt Ihr persönlicher Berater.' },
-  es: { language:'Idioma', cart:'Carrito', enquire:'Contactar soporte por WhatsApp', swipe:'Deslizar lateralmente', brands:'MARCAS DE RELOJERÍA', byBrand:'Explorar por marca', authenticated:'Autentificado', expertise:'Años de experiencia', partners:'Socios mundiales', add:'Añadir al carrito', empty:'El carrito está vacío', continue:'Seguir explorando', selected:'Piezas seleccionadas', checkout:'Solicitar consulta de compra', other:'Otro / Sin decidir', received:'Solicitud recibida, nos pondremos en contacto', consultation:'Su asesor confirmará disponibilidad y precio.' },
+  zh: { language:'语言', cart:'购物车', enquire:'联系 WhatsApp 客服', swipe:'左右滑动浏览', brands:'探索世界名表', byBrand:'按品牌探索', authenticated:'来源与实物核验', expertise:'年专业经验', partners:'全球合作伙伴', add:'加入购物车', empty:'购物车目前为空', continue:'继续浏览', selected:'所选数量', checkout:'提交购买咨询', other:'其他 / 尚未确定', received:'已收到，我们将尽快联系您', consultation:'珍贵腕表价格及库存将由专属顾问确认。', allProducts:'全部商品', maisons:'品牌', story:'我们的故事', paymentGuide:'付款说明', packaging:'包装', bagShort:'购物车', bestsellers:'热销商品', clientStories:'客户评价', privateClient:'私人客户', newItem:'新品', watchBrands:'腕表品牌', shippingPartners:'全球配送伙伴', shippingTagline:'安全包装 · 全程追踪 · 全球送达', worldwideDelivery:'OiWatch 全球送货', cartKicker:'私人选购', remove:'删除', total:'合计', checkoutNow:'继续结算', cartPricing:'商品统一以美元计价；配送、包装及随货文件以单件订单确认为准。', brandBack:'返回品牌总览', brandCatalogue:'品牌腕表目录', brandIntro:'精选在售与全球寻表服务', collectionReference:'品牌系列参考 · 非实时库存', orderReviewed:'订单信息核对', worldwideSourcing:'全球寻表', condition:'商品状态', confirmedBeforePayment:'付款前确认', included:'随附物品', confirmedPerOrder:'以订单确认清单为准', delivery:'交付方式', secureWorldwide:'全球安全配送', catalogueNote:'此处为品牌系列参考，不代表实时在售库存。具体年份、配置、状态、价格、库存、授权或供货依据及随附文件由顾问在付款前按单件商品确认。' },
+  en: { language:'Language', cart:'Shopping bag', enquire:'Contact WhatsApp support', swipe:'Swipe to explore', brands:'EXPLORE THE MAISONS', byBrand:'Discover by maison', authenticated:'Source & item checked', expertise:'Years expertise', partners:'Global partners', add:'Add to bag', empty:'Your shopping bag is empty', continue:'Continue browsing', selected:'Selected pieces', checkout:'Request purchase consultation', other:'Other / Not decided', received:'Received — we will be in touch', consultation:'Availability and pricing will be confirmed by your private advisor.', allProducts:'All watches', maisons:'Maisons', story:'Our story', paymentGuide:'Payment guide', packaging:'Packaging', bagShort:'Bag', bestsellers:'BESTSELLERS', clientStories:'CLIENT STORIES', privateClient:'PRIVATE CLIENT', newItem:'NEW', watchBrands:'Watch brands', shippingPartners:'WORLDWIDE DELIVERY PARTNERS', shippingTagline:'Secure packing · End-to-end tracking · Worldwide delivery', worldwideDelivery:'OIWATCH WORLDWIDE DELIVERY', cartKicker:'PRIVATE SELECTION', remove:'Remove', total:'Total', checkoutNow:'Continue to checkout', cartPricing:'Products are priced in USD. Delivery, packaging, and accompanying documents are confirmed per order.', brandBack:'Back to brands', brandCatalogue:'MAISON CATALOGUE', brandIntro:'Curated availability and worldwide sourcing', collectionReference:'Collection reference · not live inventory', orderReviewed:'Order details reviewed', worldwideSourcing:'Worldwide sourcing', condition:'Condition', confirmedBeforePayment:'Confirmed before payment', included:'Included materials', confirmedPerOrder:'Confirmed per order checklist', delivery:'Delivery', secureWorldwide:'Secure worldwide delivery', catalogueNote:'This is a collection reference, not live inventory. Your advisor confirms the exact year, configuration, condition, price, availability, authorisation or supply basis, and included documents for the individual item before payment.' },
+  ja: { language:'言語', cart:'ショッピングバッグ', enquire:'WhatsAppサポートへ連絡', swipe:'左右にスワイプ', brands:'世界のメゾン', byBrand:'ブランドから探す', authenticated:'仕入れ先・商品確認', expertise:'年の専門経験', partners:'世界の提携先', add:'バッグに追加', empty:'バッグは空です', continue:'閲覧を続ける', selected:'選択数', checkout:'購入相談を依頼', other:'その他 / 未定', received:'承りました。追ってご連絡します', consultation:'在庫と価格は専任アドバイザーが確認します。', allProducts:'すべての商品', maisons:'ブランド', story:'私たちについて', paymentGuide:'お支払いガイド', packaging:'包装', bagShort:'バッグ', bestsellers:'人気商品', clientStories:'お客様の声', privateClient:'プライベート顧客', newItem:'新着', watchBrands:'腕時計ブランド', shippingPartners:'世界の配送パートナー', shippingTagline:'安全な梱包 · 追跡対応 · 世界配送', worldwideDelivery:'OIWATCH 世界配送', cartKicker:'プライベートセレクション', remove:'削除', total:'合計', checkoutNow:'決済へ進む', cartPricing:'商品は米ドル表示です。配送、包装、同梱書類は注文ごとに確認されます。', brandBack:'ブランド一覧へ戻る', brandCatalogue:'ブランドカタログ', brandIntro:'厳選在庫と世界規模の探索サービス', collectionReference:'コレクション参考 · リアルタイム在庫ではありません', orderReviewed:'注文情報を確認', worldwideSourcing:'世界規模で探索', condition:'商品状態', confirmedBeforePayment:'支払い前に確認', included:'付属品', confirmedPerOrder:'注文確認リストが基準', delivery:'配送', secureWorldwide:'安全な世界配送', catalogueNote:'これはブランドコレクションの参考情報であり、リアルタイム在庫ではありません。年式、仕様、状態、価格、在庫、正規取扱または供給根拠、付属書類は、支払い前に商品ごとに確認します。' },
+  ko: { language:'언어', cart:'쇼핑백', enquire:'WhatsApp 고객센터 문의', swipe:'좌우로 밀어 보기', brands:'세계적인 메종', byBrand:'브랜드별 보기', authenticated:'공급처 및 상품 확인', expertise:'년 전문 경력', partners:'글로벌 파트너', add:'쇼핑백에 담기', empty:'쇼핑백이 비어 있습니다', continue:'계속 둘러보기', selected:'선택 수량', checkout:'구매 상담 요청', other:'기타 / 미정', received:'접수되었습니다. 곧 연락드리겠습니다', consultation:'재고와 가격은 전담 어드바이저가 확인합니다.', allProducts:'전체 상품', maisons:'브랜드', story:'브랜드 이야기', paymentGuide:'결제 안내', packaging:'포장', bagShort:'쇼핑백', bestsellers:'인기 상품', clientStories:'고객 후기', privateClient:'개인 고객', newItem:'신상품', watchBrands:'시계 브랜드', shippingPartners:'글로벌 배송 파트너', shippingTagline:'안전 포장 · 전 과정 추적 · 전 세계 배송', worldwideDelivery:'OIWATCH 전 세계 배송', cartKicker:'프라이빗 셀렉션', remove:'삭제', total:'합계', checkoutNow:'결제 계속하기', cartPricing:'상품 가격은 미화 기준입니다. 배송, 포장, 동봉 서류는 주문별로 확인됩니다.', brandBack:'브랜드 목록으로 돌아가기', brandCatalogue:'브랜드 카탈로그', brandIntro:'엄선한 재고 및 전 세계 상품 탐색', collectionReference:'컬렉션 참고 · 실시간 재고 아님', orderReviewed:'주문 정보 확인', worldwideSourcing:'전 세계 상품 탐색', condition:'상품 상태', confirmedBeforePayment:'결제 전 확인', included:'동봉 품목', confirmedPerOrder:'주문 확인 목록 기준', delivery:'배송', secureWorldwide:'안전한 전 세계 배송', catalogueNote:'브랜드 컬렉션 참고 정보이며 실시간 재고가 아닙니다. 정확한 연식, 구성, 상태, 가격, 재고, 공인 판매 또는 공급 근거, 동봉 서류는 결제 전에 상품별로 확인합니다.' },
+  fr: { language:'Langue', cart:'Panier', enquire:'Contacter le support WhatsApp', swipe:'Faire défiler latéralement', brands:'MAISONS HORLOGÈRES', byBrand:'Découvrir par maison', authenticated:'Source et article vérifiés', expertise:'Ans d’expertise', partners:'Partenaires mondiaux', add:'Ajouter au panier', empty:'Votre panier est vide', continue:'Continuer', selected:'Pièces choisies', checkout:'Demander une consultation', other:'Autre / Indécis', received:'Demande reçue, nous vous contacterons', consultation:'Disponibilité et prix seront confirmés par votre conseiller.', allProducts:'Toutes les montres', maisons:'Maisons', story:'Notre histoire', paymentGuide:'Guide de paiement', packaging:'Emballage', bagShort:'Panier', bestsellers:'MEILLEURES VENTES', clientStories:'TÉMOIGNAGES CLIENTS', privateClient:'CLIENT PRIVÉ', newItem:'NOUVEAU', watchBrands:'Marques horlogères', shippingPartners:'PARTENAIRES DE LIVRAISON MONDIAUX', shippingTagline:'Emballage sécurisé · Suivi complet · Livraison mondiale', worldwideDelivery:'LIVRAISON MONDIALE OIWATCH', cartKicker:'SÉLECTION PRIVÉE', remove:'Supprimer', total:'Total', checkoutNow:'Continuer vers le paiement', cartPricing:'Les prix sont en USD. Livraison, emballage et documents sont confirmés pour chaque commande.', brandBack:'Retour aux marques', brandCatalogue:'CATALOGUE DE LA MAISON', brandIntro:'Sélection disponible et recherche mondiale', collectionReference:'Référence de collection · stock non actualisé', orderReviewed:'Informations de commande vérifiées', worldwideSourcing:'Recherche mondiale', condition:'État', confirmedBeforePayment:'Confirmé avant paiement', included:'Éléments inclus', confirmedPerOrder:'Selon la liste de commande', delivery:'Livraison', secureWorldwide:'Livraison mondiale sécurisée', catalogueNote:'Cette page présente une référence de collection, et non un stock en temps réel. Année, configuration, état, prix, disponibilité, fondement d’autorisation ou de fourniture et documents sont confirmés pour chaque article avant paiement.' },
+  de: { language:'Sprache', cart:'Warenkorb', enquire:'WhatsApp-Support kontaktieren', swipe:'Seitlich wischen', brands:'UHRENMARKEN ENTDECKEN', byBrand:'Nach Marke entdecken', authenticated:'Herkunft und Ware geprüft', expertise:'Jahre Erfahrung', partners:'Globale Partner', add:'In den Warenkorb', empty:'Ihr Warenkorb ist leer', continue:'Weiter entdecken', selected:'Ausgewählte Uhren', checkout:'Kaufberatung anfragen', other:'Andere / Unentschieden', received:'Anfrage erhalten, wir melden uns', consultation:'Verfügbarkeit und Preis bestätigt Ihr persönlicher Berater.', allProducts:'Alle Uhren', maisons:'Marken', story:'Unsere Geschichte', paymentGuide:'Zahlungshinweise', packaging:'Verpackung', bagShort:'Warenkorb', bestsellers:'BESTSELLER', clientStories:'KUNDENSTIMMEN', privateClient:'PRIVATKUNDE', newItem:'NEU', watchBrands:'Uhrenmarken', shippingPartners:'WELTWEITE VERSANDPARTNER', shippingTagline:'Sichere Verpackung · Durchgehendes Tracking · Weltweite Lieferung', worldwideDelivery:'OIWATCH WELTWEITE LIEFERUNG', cartKicker:'PRIVATE AUSWAHL', remove:'Entfernen', total:'Gesamt', checkoutNow:'Weiter zum Checkout', cartPricing:'Die Preise sind in USD angegeben. Lieferung, Verpackung und Begleitunterlagen werden je Bestellung bestätigt.', brandBack:'Zurück zu den Marken', brandCatalogue:'MARKENKATALOG', brandIntro:'Ausgewählte Verfügbarkeit und weltweite Beschaffung', collectionReference:'Kollektionsreferenz · kein Live-Bestand', orderReviewed:'Bestelldaten geprüft', worldwideSourcing:'Weltweite Beschaffung', condition:'Zustand', confirmedBeforePayment:'Vor Zahlung bestätigt', included:'Lieferumfang', confirmedPerOrder:'Gemäß Auftragsliste', delivery:'Lieferung', secureWorldwide:'Sichere weltweite Lieferung', catalogueNote:'Dies ist eine Kollektionsreferenz, kein Live-Bestand. Jahr, Konfiguration, Zustand, Preis, Verfügbarkeit, Autorisierungs- oder Liefergrundlage und Begleitunterlagen werden vor Zahlung je Artikel bestätigt.' },
+  es: { language:'Idioma', cart:'Carrito', enquire:'Contactar soporte por WhatsApp', swipe:'Deslizar lateralmente', brands:'MARCAS DE RELOJERÍA', byBrand:'Explorar por marca', authenticated:'Origen y artículo verificados', expertise:'Años de experiencia', partners:'Socios mundiales', add:'Añadir al carrito', empty:'El carrito está vacío', continue:'Seguir explorando', selected:'Piezas seleccionadas', checkout:'Solicitar consulta de compra', other:'Otro / Sin decidir', received:'Solicitud recibida, nos pondremos en contacto', consultation:'Su asesor confirmará disponibilidad y precio.', allProducts:'Todos los relojes', maisons:'Marcas', story:'Nuestra historia', paymentGuide:'Guía de pago', packaging:'Embalaje', bagShort:'Carrito', bestsellers:'MÁS VENDIDOS', clientStories:'HISTORIAS DE CLIENTES', privateClient:'CLIENTE PRIVADO', newItem:'NUEVO', watchBrands:'Marcas de relojería', shippingPartners:'SOCIOS DE ENTREGA MUNDIAL', shippingTagline:'Embalaje seguro · Seguimiento integral · Entrega mundial', worldwideDelivery:'ENTREGA MUNDIAL OIWATCH', cartKicker:'SELECCIÓN PRIVADA', remove:'Eliminar', total:'Total', checkoutNow:'Continuar al pago', cartPricing:'Los precios se muestran en USD. La entrega, el embalaje y los documentos se confirman para cada pedido.', brandBack:'Volver a las marcas', brandCatalogue:'CATÁLOGO DE LA MARCA', brandIntro:'Disponibilidad seleccionada y búsqueda mundial', collectionReference:'Referencia de colección · no es stock en tiempo real', orderReviewed:'Datos del pedido revisados', worldwideSourcing:'Búsqueda mundial', condition:'Estado', confirmedBeforePayment:'Confirmado antes del pago', included:'Elementos incluidos', confirmedPerOrder:'Según la lista del pedido', delivery:'Entrega', secureWorldwide:'Entrega mundial segura', catalogueNote:'Esta es una referencia de colección, no un inventario en tiempo real. El año, configuración, estado, precio, disponibilidad, base de autorización o suministro y documentos se confirman para cada artículo antes del pago.' },
+};
+
+const whatsappEnquiryCopy = {
+  zh:'您好，我想咨询 OiWatch 经由授权经销及正规可追溯渠道采购的腕表商品与交付服务。',
+  en:'Hello, I would like to enquire about OiWatch watches sourced through authorised reseller and documented traceable channels, and about delivery services.',
+  ja:'OiWatchが正規取扱・追跡可能な仕入れルートから調達する腕時計と配送サービスについて相談したいです。',
+  ko:'OiWatch가 공인 판매 및 추적 가능한 정식 조달 경로를 통해 공급하는 시계 상품과 배송 서비스에 대해 문의하고 싶습니다.',
+  fr:'Bonjour, je souhaite me renseigner sur les montres qu’OiWatch se procure auprès de revendeurs autorisés et de circuits réguliers traçables, ainsi que sur le service de livraison.',
+  de:'Hallo, ich möchte mich über Uhren informieren, die OiWatch über autorisierte Händler und reguläre, nachvollziehbare Beschaffungskanäle bezieht, sowie über den Lieferservice.',
+  es:'Hola, quisiera consultar los relojes que OiWatch obtiene mediante distribuidores autorizados y canales de suministro regulares y trazables, así como el servicio de entrega.',
+};
+
+const selectionTierCopy = {
+  zh:{ rare:'珍罕配置', signature:'经典精选' },
+  en:{ rare:'Rare configuration', signature:'Signature selection' },
+  ja:{ rare:'希少仕様', signature:'定番セレクション' },
+  ko:{ rare:'희소 구성', signature:'시그니처 셀렉션' },
+  fr:{ rare:'Configuration rare', signature:'Sélection signature' },
+  de:{ rare:'Seltene Konfiguration', signature:'Signaturauswahl' },
+  es:{ rare:'Configuración poco común', signature:'Selección emblemática' },
 };
 
 const copy = {
@@ -534,14 +679,14 @@ const copy = {
     nav: ['典藏', '品牌', '我们的故事', '联系 WhatsApp 客服'],
     eyebrow: '独立高级腕表典藏',
     hero: <>时间，<br/><em>以非凡之名</em></>,
-    intro: '为真正的收藏家，严选跨越世代的机械杰作。每一枚时计，皆经我们的专家独立鉴证。',
+    intro: '为真正的收藏家，严选经由授权经销及正规可追溯采购渠道取得的机械时计。每一件商品在交付前都会核对来源信息、实物状态与随货内容。',
     explore: '探索典藏', appointment: '预约私人鉴赏',
     featured: '最新上架', sectionTitle: <>新品腕表，<em>抢先鉴赏</em></>,
-    sectionText: '浏览最新抵达的珍贵腕表。每一款均经过独立鉴证，并提供安全配送与私人选购服务。',
+    sectionText: '浏览最新抵达的珍贵腕表。每一款均经过来源信息与实物状态核验，并提供安全配送与私人选购服务。',
     view: '查看详情', all: '浏览全部典藏',
-    storyKicker: 'OiWatch · 顶级复刻工艺',
-    storyTitle: <>超级克隆 1:1，<br/><em>只做最好的品质</em></>,
-    storyBody: '我们专注于高品质 1:1 腕表，以严谨选材、精细打磨和对原版细节的高度还原为标准。从外观比例到佩戴质感，每一处都追求更接近原作的体验。',
+    storyKicker: 'OiWatch · 授权经销商品 · 可追溯采购',
+    storyTitle: <>可靠来源，<br/><em>清晰交付</em></>,
+    storyBody: '我们从具备供货依据的授权经销商及正规可追溯采购渠道取得商品，并在交付前核对型号、外观状态、功能与随货内容。授权或保修文件因品牌、型号和批次而异，具体以商品页及实际随货文件为准；除非单件商品页明确说明并提供对应证明，不表示品牌直接授权 OiWatch，也不笼统声称 OiWatch 获得所有品牌授权。',
     learn: '了解我们的故事',
     serviceTitle: '一对一私人鉴赏', serviceText: '告诉我们您所寻找的时计，专属顾问将在 24 小时内与您联系。',
     formName: '您的称呼', formContact: '邮箱或手机', formInterest: '感兴趣的腕表', formMessage: '您的需求或想寻找的型号', submit: '提交私人询价',
@@ -551,14 +696,14 @@ const copy = {
     nav: ['Collection', 'Maisons', 'Our Story', 'WhatsApp Support'],
     eyebrow: 'INDEPENDENT HAUTE HORLOGERIE',
     hero: <>Time,<br/><em>made exceptional</em></>,
-    intro: 'Mechanical masterpieces selected for true collectors. Every timepiece is independently authenticated by our specialists.',
+    intro: 'Mechanical timepieces selected for collectors through authorised reseller and documented, traceable procurement channels. Source information, item condition and included materials are checked before delivery.',
     explore: 'Explore collection', appointment: 'Private appointment',
     featured: 'NEW ARRIVALS', sectionTitle: <>Newly arrived, <em>ready to discover</em></>,
-    sectionText: 'Explore our latest arrivals. Every piece is independently authenticated and available with secure delivery.',
+    sectionText: 'Explore our latest arrivals. Source information and item condition are checked, with secure delivery and private assistance.',
     view: 'Discover', all: 'View complete collection',
-    storyKicker: 'OIWATCH · PREMIUM REPLICA CRAFT',
-    storyTitle: <>Super Clone 1:1<br/><em>Only the finest quality</em></>,
-    storyBody: 'We focus on premium 1:1 timepieces, defined by carefully selected materials, meticulous finishing and faithful attention to original details. Every element is refined for a remarkably authentic look and feel.',
+    storyKicker: 'OIWATCH · AUTHORISED RESELLER GOODS · TRACEABLE SOURCING',
+    storyTitle: <>Reliable sourcing,<br/><em>clear delivery</em></>,
+    storyBody: 'We source through authorised resellers and documented, traceable procurement channels with a basis to supply the goods, then check the model, condition, functions and included materials before delivery. Authorisation and warranty documents vary by brand, model and batch and are limited to what the product page and parcel specifically include. Unless expressly stated for an individual item and supported by corresponding evidence, this does not mean a brand directly authorises OiWatch, and OiWatch does not claim blanket authorisation from every brand.',
     learn: 'Our story',
     serviceTitle: 'A private consultation', serviceText: 'Tell us what you seek. Your dedicated advisor will respond within 24 hours.',
     formName: 'Your name', formContact: 'Email or phone', formInterest: 'Timepiece of interest', formMessage: 'What are you looking for?', submit: 'Send private enquiry',
@@ -568,14 +713,14 @@ const copy = {
     nav: ['コレクション', 'ブランド', '私たちの物語', 'WhatsAppサポート'],
     eyebrow: '独立系高級時計コレクション',
     hero: <>時を、<br/><em>特別な存在へ</em></>,
-    intro: '真のコレクターのために選び抜かれた機械式時計。すべての時計は専門家が独立して鑑定します。',
+    intro: '正規取扱販売店および正規で追跡可能な仕入れルートから、コレクターのために機械式時計を厳選。お届け前に仕入れ情報、商品の状態、付属内容を確認します。',
     explore: 'コレクションを見る', appointment: '個別鑑賞を予約',
     featured: '新着商品', sectionTitle: <>新しい時計を、<em>いち早く</em></>,
-    sectionText: '新たに入荷した希少な時計をご覧ください。すべて独立鑑定と安全な配送に対応します。',
+    sectionText: '新着時計をご覧ください。仕入れ情報と商品の状態を確認し、安全な配送と個別サポートを提供します。',
     view: '詳細を見る', all: 'すべてのコレクション',
-    storyKicker: 'OiWatch · 最高級レプリカ技術',
-    storyTitle: <>スーパーコピー 1:1<br/><em>最高品質だけを追求</em></>,
-    storyBody: '厳選素材、精密な仕上げ、オリジナルの細部まで忠実に再現した高品質な1:1タイムピースをお届けします。',
+    storyKicker: 'OiWatch · 正規取扱商品 · 追跡可能な仕入れ',
+    storyTitle: <>信頼できる仕入れ、<br/><em>明確な納品</em></>,
+    storyBody: '供給根拠のある正規取扱販売店および追跡可能な仕入れルートから商品を調達し、お届け前にモデル、状態、機能、付属内容を確認します。認定書や保証書の有無はブランド、モデル、入荷ロットによって異なり、商品ページと実際の同梱物が基準です。個別商品について根拠を添えて明記しない限り、各ブランドがOiWatchを直接認定していることを意味せず、すべてのブランドから一括認定を受けているとは表示しません。',
     learn: '私たちの物語', serviceTitle: '個別コンサルテーション', serviceText: 'お探しの時計をお知らせください。専任アドバイザーが24時間以内にご連絡します。',
     formName: 'お名前', formContact: 'メールまたは電話番号', formInterest: 'ご興味のある時計', formMessage: 'ご希望のモデルや条件', submit: 'お問い合わせを送信', privacy: 'お客様の情報は厳重に管理されます。',
   },
@@ -583,14 +728,14 @@ const copy = {
     nav: ['컬렉션', '브랜드', '우리의 이야기', 'WhatsApp 고객센터'],
     eyebrow: '독립 하이엔드 시계 컬렉션',
     hero: <>시간을,<br/><em>특별함으로</em></>,
-    intro: '진정한 컬렉터를 위해 엄선한 기계식 걸작. 모든 시계는 전문가의 독립 감정을 거칩니다.',
+    intro: '공인 판매처와 정식·추적 가능한 조달 경로를 통해 컬렉터를 위한 기계식 시계를 엄선합니다. 배송 전 공급 정보, 상품 상태와 구성품을 확인합니다.',
     explore: '컬렉션 보기', appointment: '프라이빗 감상 예약',
     featured: '신상품', sectionTitle: <>새롭게 입고된, <em>특별한 시계</em></>,
-    sectionText: '새롭게 도착한 희귀 시계를 만나보세요. 모든 제품은 독립 감정과 안전 배송을 제공합니다.',
+    sectionText: '새로 입고된 시계를 만나보세요. 공급 정보와 상품 상태를 확인하며 안전 배송과 개별 상담을 제공합니다.',
     view: '상세 보기', all: '전체 컬렉션',
-    storyKicker: 'OiWatch · 프리미엄 레플리카 공예',
-    storyTitle: <>슈퍼 클론 1:1<br/><em>최고의 품질만을 추구합니다</em></>,
-    storyBody: '엄선한 소재와 정교한 마감, 원본의 디테일까지 충실하게 구현한 프리미엄 1:1 타임피스를 선보입니다.',
+    storyKicker: 'OiWatch · 공인 판매 채널 상품 · 추적 가능한 조달',
+    storyTitle: <>신뢰할 수 있는 공급,<br/><em>명확한 인도</em></>,
+    storyBody: '공급 근거가 있는 공인 판매처와 정식·추적 가능한 조달 경로를 통해 상품을 조달하고 배송 전 모델, 상태, 기능 및 구성품을 확인합니다. 인증서와 보증 문서는 브랜드, 모델 및 입고분에 따라 다르며 상품 페이지와 실제 동봉물이 기준입니다. 개별 상품에 대해 근거와 함께 명시하지 않는 한 브랜드가 OiWatch를 직접 공인했다는 의미가 아니며, OiWatch는 모든 브랜드의 포괄적 공인을 받았다고 주장하지 않습니다.',
     learn: '우리의 이야기', serviceTitle: '일대일 프라이빗 상담', serviceText: '찾으시는 시계를 알려주시면 전담 어드바이저가 24시간 이내에 연락드립니다.',
     formName: '성함', formContact: '이메일 또는 전화번호', formInterest: '관심 시계', formMessage: '찾으시는 모델이나 조건', submit: '상담 요청 보내기', privacy: '고객 정보는 철저히 보호됩니다.',
   },
@@ -598,14 +743,14 @@ const copy = {
     nav: ['Collection', 'Maisons', 'Notre histoire', 'Support WhatsApp'],
     eyebrow: 'SÉLECTION INDÉPENDANTE DE HAUTE HORLOGERIE',
     hero: <>Le temps,<br/><em>rendu exceptionnel</em></>,
-    intro: 'Des chefs-d’œuvre mécaniques choisis pour les véritables collectionneurs. Chaque pièce est authentifiée par nos experts.',
+    intro: 'Des montres mécaniques sélectionnées pour les collectionneurs auprès de revendeurs autorisés et de circuits d’approvisionnement réguliers, documentés et traçables. La provenance, l’état et les éléments inclus sont contrôlés avant livraison.',
     explore: 'Découvrir la collection', appointment: 'Rendez-vous privé',
     featured: 'NOUVEAUTÉS', sectionTitle: <>Nouvelles arrivées, <em>à découvrir</em></>,
-    sectionText: 'Découvrez nos dernières pièces, toutes authentifiées indépendamment et proposées avec livraison sécurisée.',
+    sectionText: 'Découvrez nos dernières pièces. Leur provenance et leur état sont vérifiés, avec livraison sécurisée et accompagnement privé.',
     view: 'Découvrir', all: 'Voir toute la collection',
-    storyKicker: 'OiWatch · RÉPLIQUE HAUT DE GAMME',
-    storyTitle: <>Super Clone 1:1<br/><em>La meilleure qualité</em></>,
-    storyBody: 'Nous proposons des montres 1:1 haut de gamme, réalisées avec des matériaux sélectionnés, des finitions méticuleuses et une reproduction fidèle des détails originaux.',
+    storyKicker: 'OiWatch · ARTICLES DE REVENDEURS AUTORISÉS · APPROVISIONNEMENT TRAÇABLE',
+    storyTitle: <>Une provenance fiable,<br/><em>une livraison claire</em></>,
+    storyBody: 'Nous nous approvisionnons auprès de revendeurs autorisés et de circuits réguliers, documentés et traçables disposant d’un fondement pour fournir les articles, puis contrôlons le modèle, l’état, les fonctions et les éléments inclus. Les documents d’autorisation ou de garantie varient selon la marque, le modèle et le lot et se limitent à ce qui est indiqué sur la fiche produit et réellement fourni. Sauf mention explicite pour un article précis, étayée par une preuve correspondante, cela ne signifie pas qu’une marque autorise directement OiWatch, qui ne revendique aucune autorisation générale de toutes les marques.',
     learn: 'Notre histoire', serviceTitle: 'Une consultation privée', serviceText: 'Confiez-nous votre recherche. Votre conseiller dédié vous répondra sous 24 heures.',
     formName: 'Votre nom', formContact: 'E-mail ou téléphone', formInterest: 'Pièce recherchée', formMessage: 'Votre modèle ou vos critères', submit: 'Envoyer la demande', privacy: 'Vos informations restent strictement confidentielles.',
   },
@@ -613,14 +758,14 @@ const copy = {
     nav: ['Kollektion', 'Marken', 'Unsere Geschichte', 'WhatsApp-Support'],
     eyebrow: 'UNABHÄNGIGE AUSWAHL HOHER UHRMACHERKUNST',
     hero: <>Zeit,<br/><em>außergewöhnlich gemacht</em></>,
-    intro: 'Mechanische Meisterwerke für echte Sammler. Jede Uhr wird von unseren Spezialisten unabhängig authentifiziert.',
+    intro: 'Mechanische Uhren für Sammler, ausgewählt über autorisierte Händler sowie reguläre, dokumentierte und nachvollziehbare Beschaffungskanäle. Herkunftsangaben, Warenzustand und Lieferumfang werden vor der Übergabe geprüft.',
     explore: 'Kollektion entdecken', appointment: 'Privattermin vereinbaren',
     featured: 'NEU EINGETROFFEN', sectionTitle: <>Neu eingetroffen, <em>jetzt entdecken</em></>,
-    sectionText: 'Entdecken Sie unsere neuesten Uhren – unabhängig authentifiziert und sicher geliefert.',
+    sectionText: 'Entdecken Sie unsere neuesten Uhren. Herkunftsangaben und Warenzustand werden geprüft; sichere Lieferung und persönliche Betreuung sind inklusive.',
     view: 'Details ansehen', all: 'Gesamte Kollektion',
-    storyKicker: 'OiWatch · PREMIUM-REPLIKA-HANDWERK',
-    storyTitle: <>Super Clone 1:1<br/><em>Nur höchste Qualität</em></>,
-    storyBody: 'Wir bieten hochwertige 1:1-Zeitmesser mit ausgewählten Materialien, sorgfältiger Verarbeitung und originalgetreu wiedergegebenen Details.',
+    storyKicker: 'OiWatch · AUTORISIERTE HÄNDLERWARE · NACHVOLLZIEHBARE BESCHAFFUNG',
+    storyTitle: <>Verlässliche Herkunft,<br/><em>klare Übergabe</em></>,
+    storyBody: 'Wir beziehen Waren über autorisierte Händler sowie reguläre, dokumentierte und nachvollziehbare Beschaffungskanäle mit einer Liefergrundlage und prüfen vor der Übergabe Modell, Zustand, Funktionen und Lieferumfang. Autorisierungs- und Garantiedokumente unterscheiden sich je nach Marke, Modell und Charge; maßgeblich sind die Produktseite und die tatsächlich beiliegenden Unterlagen. Sofern dies nicht für einen einzelnen Artikel ausdrücklich mit entsprechendem Nachweis angegeben ist, bedeutet es keine direkte Autorisierung von OiWatch durch die jeweilige Marke; OiWatch beansprucht keine pauschale Autorisierung durch alle Marken.',
     learn: 'Unsere Geschichte', serviceTitle: 'Persönliche Beratung', serviceText: 'Teilen Sie uns Ihre Wünsche mit. Ihr persönlicher Berater antwortet innerhalb von 24 Stunden.',
     formName: 'Ihr Name', formContact: 'E-Mail oder Telefon', formInterest: 'Gewünschte Uhr', formMessage: 'Modell oder Anforderungen', submit: 'Anfrage senden', privacy: 'Ihre Angaben werden streng vertraulich behandelt.',
   },
@@ -628,27 +773,27 @@ const copy = {
     nav: ['Colección', 'Marcas', 'Nuestra historia', 'Soporte WhatsApp'],
     eyebrow: 'SELECCIÓN INDEPENDIENTE DE ALTA RELOJERÍA',
     hero: <>El tiempo,<br/><em>hecho excepcional</em></>,
-    intro: 'Obras maestras mecánicas seleccionadas para auténticos coleccionistas. Cada pieza es autentificada por nuestros especialistas.',
+    intro: 'Relojes mecánicos seleccionados para coleccionistas mediante distribuidores autorizados y canales de suministro regulares, documentados y trazables. Antes de la entrega comprobamos la procedencia, el estado y los elementos incluidos.',
     explore: 'Explorar la colección', appointment: 'Cita privada',
     featured: 'NOVEDADES', sectionTitle: <>Recién llegados, <em>listos para descubrir</em></>,
-    sectionText: 'Descubra nuestras últimas piezas, autentificadas de forma independiente y con entrega segura.',
+    sectionText: 'Descubra nuestras últimas piezas. Verificamos la procedencia y el estado del artículo, con entrega segura y atención privada.',
     view: 'Ver detalles', all: 'Ver toda la colección',
-    storyKicker: 'OiWatch · RÉPLICA DE ALTA GAMA',
-    storyTitle: <>Super Clone 1:1<br/><em>Solo la mejor calidad</em></>,
-    storyBody: 'Ofrecemos relojes 1:1 de alta calidad, elaborados con materiales seleccionados, acabados meticulosos y una reproducción fiel de los detalles originales.',
+    storyKicker: 'OiWatch · ARTÍCULOS DE DISTRIBUIDORES AUTORIZADOS · SUMINISTRO TRAZABLE',
+    storyTitle: <>Procedencia fiable,<br/><em>entrega clara</em></>,
+    storyBody: 'Nos abastecemos mediante distribuidores autorizados y canales regulares, documentados y trazables con base para suministrar los artículos, y antes de la entrega comprobamos el modelo, el estado, las funciones y los elementos incluidos. Los documentos de autorización o garantía varían según la marca, el modelo y el lote y se limitan a lo indicado en la ficha del producto y a lo realmente incluido. Salvo indicación expresa para un artículo concreto respaldada por la prueba correspondiente, esto no significa que una marca autorice directamente a OiWatch, que no afirma contar con una autorización general de todas las marcas.',
     learn: 'Nuestra historia', serviceTitle: 'Consulta privada', serviceText: 'Cuéntenos qué busca. Su asesor personal responderá en un plazo de 24 horas.',
     formName: 'Su nombre', formContact: 'Correo o teléfono', formInterest: 'Reloj de interés', formMessage: 'Modelo o requisitos', submit: 'Enviar consulta', privacy: 'Sus datos se mantendrán estrictamente confidenciales.',
   }
 };
 
 const qualityCopy = {
-  zh:{nav:'品质说明',back:'返回首页',kicker:'OIWATCH 品质标准',title:'超级克隆 1:1，与普通 AAA 有何不同？',intro:'两者看似都叫复刻，实际在材质、结构、细节和佩戴体验上有明显差距。OiWatch 只选择更高标准的超级克隆腕表。',super:'OiWatch 超级克隆 1:1',aaa:'普通 AAA 腕表',best:'高阶品质之选',cheap:'廉价入门级',superPoints:['按原版比例开发，表壳、表盘与字面细节高度还原','选用更高规格材质，重量、光泽和触感更接近原作','机芯结构与功能表现更完整，装配和调校要求更高','细节经近距离检查，适合日常佩戴与长期收藏'],aaaPoints:['以低成本和快速生产为主，外形通常只有大致相似','材质轻薄，刻度、字体、颜色和打磨容易失真','机芯以基础走时为主，功能和结构还原有限','更像短期体验的玩具级产品，因此售价较低'],note:'“AAA”“超级克隆”等名称并非全球统一的官方等级；OiWatch 以实际材质、做工和交付检查作为品质标准。'},
-  en:{nav:'Our Quality',back:'Back to home',kicker:'THE OIWATCH STANDARD',title:'Super Clone 1:1 vs ordinary AAA watches',intro:'Both may be described as replicas, but their materials, construction, detailing and wrist feel are very different. OiWatch selects only higher-standard Super Clone pieces.',super:'OiWatch Super Clone 1:1',aaa:'Ordinary AAA Watches',best:'Premium choice',cheap:'Low-cost entry level',superPoints:['Developed to original proportions with highly faithful case, dial and typography details','Higher-grade materials deliver weight, lustre and tactility closer to the original','More complete movement architecture and functions, with stricter assembly and regulation','Close-range detail inspection for confident daily wear and long-term enjoyment'],aaaPoints:['Built around low cost and fast production, with only a broadly similar appearance','Lightweight materials and visibly weaker printing, colour and finishing','Basic timekeeping movements with limited functional or structural resemblance','A toy-like, short-term experience that explains the lower price'],note:'Terms such as “AAA” and “Super Clone” are not globally standardised official grades; OiWatch judges quality by actual materials, workmanship and pre-delivery inspection.'},
-  ja:{nav:'品質について',back:'ホームへ戻る',kicker:'OIWATCH 品質基準',title:'スーパーコピー1:1と一般的なAAAの違い',intro:'素材、構造、細部、装着感には大きな差があります。OiWatchは高水準のスーパーコピーのみを選びます。',super:'OiWatch スーパーコピー 1:1',aaa:'一般的なAAA時計',best:'上質な選択',cheap:'低価格入門品',superPoints:['オリジナルの比率に基づき、ケースや文字盤を忠実に再現','上質な素材による重量感、光沢、手触り','より完全なムーブメント構造と機能、厳格な組立調整','近距離で細部を検品し、日常使用にも適した品質'],aaaPoints:['低コストと大量生産が中心で、外観は大まかな類似に留まる','軽い素材で、印刷、色、仕上げが粗い','基本的な時刻表示のみで構造や機能の再現が限定的','価格相応の玩具に近い短期的な体験'],note:'AAAやスーパーコピーは世界共通の公式等級ではありません。OiWatchは実際の素材、仕上げ、出荷前検品で品質を判断します。'},
-  ko:{nav:'품질 안내',back:'홈으로',kicker:'OIWATCH 품질 기준',title:'슈퍼 클론 1:1과 일반 AAA의 차이',intro:'소재, 구조, 디테일과 착용감에는 큰 차이가 있습니다. OiWatch는 높은 기준의 슈퍼 클론만을 선택합니다.',super:'OiWatch 슈퍼 클론 1:1',aaa:'일반 AAA 시계',best:'프리미엄 선택',cheap:'저가 입문형',superPoints:['원본 비율을 기준으로 케이스와 다이얼 디테일을 충실히 구현','고급 소재로 원본에 가까운 무게와 광택, 촉감 제공','더 완전한 무브먼트 구조와 기능, 엄격한 조립과 조정','근거리 디테일 검사로 일상 착용과 장기 사용에 적합'],aaaPoints:['낮은 원가와 빠른 생산 중심으로 외형만 대략 유사','가벼운 소재와 낮은 인쇄, 색상, 마감 품질','기본 시간 표시 위주로 구조와 기능 재현이 제한적','가격이 저렴한 장난감 수준의 단기 체험 제품'],note:'AAA와 슈퍼 클론은 세계 공통 공식 등급이 아닙니다. OiWatch는 실제 소재, 마감과 출고 검수로 품질을 평가합니다.'},
-  fr:{nav:'Notre qualité',back:'Retour',kicker:'LA NORME OIWATCH',title:'Super Clone 1:1 ou montre AAA ordinaire',intro:'Les matériaux, la construction, les détails et le confort sont très différents. OiWatch ne sélectionne que des Super Clones de niveau supérieur.',super:'OiWatch Super Clone 1:1',aaa:'Montres AAA ordinaires',best:'Choix premium',cheap:'Entrée de gamme économique',superPoints:['Proportions originales et détails du boîtier et du cadran fidèlement reproduits','Matériaux supérieurs, poids, éclat et toucher proches de l’original','Architecture et fonctions du mouvement plus complètes, assemblage plus strict','Inspection rapprochée des détails pour un usage quotidien durable'],aaaPoints:['Conçues pour un coût minimal et une production rapide, avec une ressemblance approximative','Matériaux légers, impression, couleurs et finitions visiblement inférieures','Mouvement basique avec peu de fonctions ou de similitude structurelle','Une expérience proche du jouet qui explique le prix réduit'],note:'AAA et Super Clone ne sont pas des grades officiels universels. OiWatch évalue les matériaux, la finition et le contrôle avant livraison.'},
-  de:{nav:'Unsere Qualität',back:'Zurück',kicker:'DER OIWATCH-STANDARD',title:'Super Clone 1:1 oder gewöhnliche AAA-Uhr',intro:'Materialien, Konstruktion, Details und Tragegefühl unterscheiden sich deutlich. OiWatch wählt nur Super Clones mit höherem Standard.',super:'OiWatch Super Clone 1:1',aaa:'Gewöhnliche AAA-Uhren',best:'Premium-Auswahl',cheap:'Günstige Einstiegsklasse',superPoints:['Nach Originalproportionen mit detailgetreuem Gehäuse und Zifferblatt entwickelt','Hochwertigere Materialien für originalnahes Gewicht, Glanz und Gefühl','Vollständigere Werkarchitektur und Funktionen, strengere Montage und Regulierung','Detailprüfung aus nächster Nähe für dauerhaftes tägliches Tragen'],aaaPoints:['Auf niedrige Kosten und schnelle Fertigung ausgelegt, nur grob ähnliche Optik','Leichte Materialien und sichtbar schwächere Druck-, Farb- und Finishqualität','Einfaches Uhrwerk mit begrenzter funktionaler und struktureller Ähnlichkeit','Spielzeugartige Kurzzeiterfahrung zum entsprechend niedrigen Preis'],note:'AAA und Super Clone sind keine weltweit einheitlichen offiziellen Qualitätsstufen. OiWatch bewertet Material, Verarbeitung und Auslieferungskontrolle.'},
-  es:{nav:'Nuestra calidad',back:'Volver',kicker:'EL ESTÁNDAR OIWATCH',title:'Super Clone 1:1 frente a un AAA corriente',intro:'Los materiales, la construcción, los detalles y la sensación en la muñeca son muy diferentes. OiWatch selecciona únicamente Super Clones de nivel superior.',super:'OiWatch Super Clone 1:1',aaa:'Relojes AAA corrientes',best:'Elección prémium',cheap:'Gama económica',superPoints:['Proporciones originales y detalles de caja y esfera fielmente reproducidos','Materiales superiores con peso, brillo y tacto más cercanos al original','Arquitectura y funciones del movimiento más completas, con montaje más estricto','Inspección detallada para el uso diario y el disfrute a largo plazo'],aaaPoints:['Fabricación rápida y de bajo coste, con una apariencia solo aproximada','Materiales ligeros y menor calidad de impresión, color y acabado','Movimiento básico con escasa semejanza funcional o estructural','Experiencia similar a un juguete que explica su precio reducido'],note:'AAA y Super Clone no son grados oficiales estandarizados mundialmente. OiWatch valora materiales, acabado e inspección previa a la entrega.'}
+  zh:{nav:'品质与来源',back:'返回首页',kicker:'OIWATCH 交付标准',title:'我们如何核验商品来源与交付内容',intro:'商品通过具有供货依据的授权经销商及正规可追溯采购渠道取得。每件商品均按实际信息检查，不用笼统宣传代替具体证明。',super:'采购与来源核验',aaa:'实物与文件核验',best:'授权经销与可追溯采购',cheap:'交付信息透明',superPoints:['记录供应渠道、经销商和采购批次等可用来源信息','核对品牌、系列、型号及订单所列配置','根据商品情况核对经销商票据、保修资料或其他随货文件','发现来源或商品信息无法对应时，在交付前暂停处理'],aaaPoints:['交付前检查外观状态、基础功能及订单配置','清点包装、卡片、说明书和配件，并按实际内容交付','商品页未明确列出的文件、品牌保修或配件不作默认承诺','客户可在付款前向顾问确认该件商品的具体随货内容'],note:'“授权经销与可追溯采购”是指供应渠道或经销商具备相应供货依据，不等于品牌直接授权 OiWatch，也不表示 OiWatch 获得所有品牌的笼统授权。只有单件商品页明确注明且具备对应证明时，才表示该件商品附有特定授权或保修文件。'},
+  en:{nav:'Quality & Source',back:'Back to home',kicker:'THE OIWATCH DELIVERY STANDARD',title:'How we check source and delivery contents',intro:'Products are sourced through authorised resellers and documented, traceable procurement channels with a basis to supply the goods. Each item is checked against specific information rather than relying on broad marketing claims.',super:'Sourcing and provenance checks',aaa:'Item and document checks',best:'Authorised reseller & traceable sourcing',cheap:'Transparent delivery',superPoints:['Record available source details such as supply channel, dealer and procurement batch','Match the brand, collection, model and listed configuration to the order','Check dealer receipts, warranty materials or other accompanying documents where applicable','Pause fulfilment before delivery if source or item information cannot be reconciled'],aaaPoints:['Inspect condition, basic functions and order configuration before delivery','Inventory packaging, cards, manuals and accessories and deliver only what is actually included','Do not imply documents, brand warranty or accessories that are not expressly listed','Allow customers to confirm the exact included materials with an advisor before payment'],note:'“Authorised reseller and traceable sourcing” means the supply channel or dealer has an applicable basis to supply the goods. It does not mean a brand directly authorises OiWatch, and OiWatch does not claim blanket authorisation from every brand. A specific authorisation or warranty document is included only when the individual product page expressly says so and corresponding evidence is available.'},
+  ja:{nav:'品質と仕入れ',back:'ホームへ戻る',kicker:'OIWATCH 納品基準',title:'仕入れ先と納品内容の確認方法',intro:'商品は、供給根拠のある正規取扱販売店および正規で追跡可能な仕入れルートから調達します。包括的な宣伝表現ではなく、各商品を具体的な情報に基づいて確認します。',super:'仕入れ先・流通経路の確認',aaa:'商品・書類の確認',best:'正規取扱・追跡可能な仕入れ',cheap:'透明な納品情報',superPoints:['仕入れルート、販売店、入荷ロットなど確認可能な情報を記録','ブランド、コレクション、モデル、注文内容を照合','該当する場合は販売店の書類、保証資料、その他の付属書類を確認','仕入れ情報と商品情報が一致しない場合は納品前に処理を保留'],aaaPoints:['納品前に外観状態、基本機能、注文内容を確認','箱、カード、説明書、付属品を実物に基づいて確認','商品ページに明記のない書類、ブランド保証、付属品は約束しない','支払い前に専任担当者へ具体的な付属内容を確認可能'],note:'「正規取扱・追跡可能な仕入れ」は、仕入れ先または販売店に該当商品の供給根拠があることを示し、ブランドがOiWatchを直接認定していることや、すべてのブランドから一括認定を受けていることを意味しません。特定の認定書や保証書は、個別の商品ページに明記され対応する証拠がある場合に限り付属します。'},
+  ko:{nav:'품질 및 공급',back:'홈으로',kicker:'OIWATCH 인도 기준',title:'공급 경로와 인도 구성 확인 방법',intro:'상품은 공급 근거가 있는 공인 판매처와 정식·추적 가능한 조달 경로를 통해 조달합니다. 포괄적인 광고 문구가 아니라 각 상품의 구체적인 정보를 기준으로 확인합니다.',super:'공급처 및 출처 확인',aaa:'상품 및 문서 확인',best:'공인 판매 및 추적 가능한 조달',cheap:'투명한 인도 정보',superPoints:['공급 경로, 딜러, 조달 배치 등 확인 가능한 출처 정보 기록','브랜드, 컬렉션, 모델 및 주문에 기재된 사양 대조','해당되는 경우 딜러 서류, 보증 자료 또는 기타 동봉 문서 확인','출처와 상품 정보가 일치하지 않으면 배송 전에 처리 보류'],aaaPoints:['배송 전 외관 상태, 기본 기능과 주문 사양 확인','포장, 카드, 설명서 및 액세서리를 실제 구성 기준으로 점검','상품 페이지에 명시하지 않은 문서, 브랜드 보증 또는 구성품은 약속하지 않음','결제 전 담당자에게 해당 상품의 정확한 구성품 확인 가능'],note:'“공인 판매 및 추적 가능한 조달”은 공급 채널이나 판매처에 해당 상품을 공급할 근거가 있다는 뜻이며, 브랜드가 OiWatch를 직접 공인했거나 모든 브랜드가 OiWatch를 포괄적으로 공인했다는 의미가 아닙니다. 특정 인증서나 보증 문서는 개별 상품 페이지에 명시되고 해당 근거가 있는 경우에만 포함됩니다.'},
+  fr:{nav:'Qualité et provenance',back:'Retour',kicker:'LA NORME DE LIVRAISON OIWATCH',title:'Comment nous vérifions la provenance et le contenu livré',intro:'Les produits proviennent de revendeurs autorisés et de circuits d’approvisionnement réguliers, documentés et traçables disposant d’un fondement pour les fournir. Chaque article est contrôlé selon des informations précises, sans remplacer les preuves par des affirmations générales.',super:'Contrôle de l’approvisionnement',aaa:'Contrôle de l’article et des documents',best:'Revendeurs autorisés et approvisionnement traçable',cheap:'Livraison transparente',superPoints:['Consigner les informations disponibles sur le circuit, le revendeur et le lot','Faire correspondre la marque, la collection, le modèle et la configuration de la commande','Vérifier, le cas échéant, les justificatifs du revendeur, documents de garantie ou autres pièces jointes','Suspendre la livraison si la provenance et les informations de l’article ne concordent pas'],aaaPoints:['Contrôler l’état, les fonctions de base et la configuration avant livraison','Inventorier l’écrin, les cartes, les notices et les accessoires réellement inclus','Ne pas promettre de document, garantie de marque ou accessoire non expressément indiqué','Permettre au client de confirmer le contenu exact avec un conseiller avant paiement'],note:'« Revendeurs autorisés et approvisionnement traçable » signifie que le circuit ou le revendeur dispose d’un fondement pour fournir les produits. Cela ne signifie pas qu’une marque autorise directement OiWatch, qui ne revendique aucune autorisation générale de toutes les marques. Un document d’autorisation ou de garantie précis n’est inclus que si la fiche de l’article l’indique expressément et qu’un justificatif correspondant est disponible.'},
+  de:{nav:'Qualität und Herkunft',back:'Zurück',kicker:'DER OIWATCH-LIEFERSTANDARD',title:'So prüfen wir Herkunft und Lieferumfang',intro:'Die Waren stammen von autorisierten Händlern und aus regulären, dokumentierten und nachvollziehbaren Beschaffungskanälen mit einer Liefergrundlage. Jeder Artikel wird anhand konkreter Angaben geprüft; allgemeine Werbeaussagen ersetzen keine Nachweise.',super:'Beschaffungs- und Herkunftsprüfung',aaa:'Waren- und Dokumentenprüfung',best:'Autorisierte Händler & nachvollziehbare Beschaffung',cheap:'Transparente Lieferung',superPoints:['Verfügbare Angaben zu Lieferkanal, Händler und Beschaffungscharge dokumentieren','Marke, Kollektion, Modell und bestellte Konfiguration abgleichen','Falls zutreffend Händlerbelege, Garantieunterlagen oder weitere Begleitdokumente prüfen','Die Lieferung aussetzen, wenn Herkunft und Warenangaben nicht zusammenpassen'],aaaPoints:['Zustand, Grundfunktionen und Bestellkonfiguration vor Übergabe prüfen','Verpackung, Karten, Anleitungen und Zubehör nach tatsächlichem Umfang erfassen','Nicht ausdrücklich aufgeführte Dokumente, Markengarantie oder Zubehör nicht versprechen','Den genauen Lieferumfang vor Zahlung durch einen Berater bestätigen lassen'],note:'„Autorisierte Händler und nachvollziehbare Beschaffung“ bedeutet, dass der Lieferkanal oder Händler eine Grundlage zur Lieferung der Waren hat. Dies bedeutet keine direkte Autorisierung von OiWatch durch eine Marke; OiWatch beansprucht keine pauschale Autorisierung durch alle Marken. Bestimmte Autorisierungs- oder Garantieunterlagen sind nur enthalten, wenn die einzelne Produktseite dies ausdrücklich nennt und ein entsprechender Nachweis vorliegt.'},
+  es:{nav:'Calidad y procedencia',back:'Volver',kicker:'EL ESTÁNDAR DE ENTREGA OIWATCH',title:'Cómo verificamos la procedencia y el contenido de entrega',intro:'Los productos se obtienen mediante distribuidores autorizados y canales de suministro regulares, documentados y trazables con base para suministrarlos. Cada artículo se comprueba con información concreta, sin sustituir las pruebas por afirmaciones generales.',super:'Control de suministro y procedencia',aaa:'Control del artículo y documentos',best:'Distribuidores autorizados y suministro trazable',cheap:'Entrega transparente',superPoints:['Registrar la información disponible del canal, distribuidor y lote de compra','Cotejar la marca, colección, modelo y configuración indicada en el pedido','Cuando corresponda, comprobar justificantes del distribuidor, garantía u otros documentos','Detener la entrega si la procedencia y los datos del artículo no coinciden'],aaaPoints:['Revisar el estado, las funciones básicas y la configuración antes de la entrega','Inventariar embalaje, tarjetas, manuales y accesorios realmente incluidos','No prometer documentos, garantía de marca o accesorios que no estén expresamente indicados','Permitir que el cliente confirme el contenido exacto con un asesor antes de pagar'],note:'“Distribuidores autorizados y suministro trazable” significa que el canal o distribuidor tiene una base aplicable para suministrar los productos. No significa que una marca autorice directamente a OiWatch, que no afirma contar con una autorización general de todas las marcas. Un documento específico de autorización o garantía solo se incluye cuando la ficha del artículo lo indica expresamente y existe la prueba correspondiente.'}
 };
 
 function optimizedImage(url, width = 640, quality = 72) {
@@ -662,9 +807,9 @@ function catalogDisplayProduct(product, lang) {
     ...product,
     tags:deriveProductTags(product),
     sortDate:product.updatedAt || new Date().toISOString(),
-    displayName:lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece',
-    displayBrand:lang === 'zh' ? product.brandZh : product.brandEn || 'OiWatch',
-    description:lang === 'zh' ? product.descriptionZh : product.translations?.[lang]?.description || product.descriptionEn || product.translations?.en?.description || 'Product information is being prepared.',
+    displayName:localizedProductValue(product, lang, 'name'),
+    displayBrand:cleanLocalizedText(lang === 'zh' ? product.brandZh : product.brandEn, lang) || 'OiWatch',
+    description:localizedProductValue(product, lang, 'description'),
     mediaUrls:product.media?.map(media => {
       const type = media.contentType || media.type || (/\.(mp4|webm|mov|m4v)(?:\?|$)/i.test(media.url || '') ? 'video' : 'image');
       return { url:media.url, type };
@@ -674,16 +819,16 @@ function catalogDisplayProduct(product, lang) {
 }
 
 const descriptionSections = [
-  ['Size', /尺寸/i],
-  ['Movement', /機芯|机芯/i],
-  ['Functions', /功能/i],
-  ['Case', /表\s*殼|錶殼|表壳/i],
-  ['Dial', /錶盤|表盘/i],
-  ['Crystal', /表鏡|表镜/i],
-  ['Bezel', /表圈/i],
-  ['Strap', /表帶|表带/i],
-  ['Clasp', /錶扣|表扣/i],
-  ['Water Resistance', /防水/i],
+  ['size', 'Size', /尺寸/i],
+  ['movement', 'Movement', /機芯|机芯/i],
+  ['functions', 'Functions', /功能/i],
+  ['case', 'Case', /表\s*殼|錶殼|表壳/i],
+  ['dial', 'Dial', /錶盤|表盘/i],
+  ['crystal', 'Crystal', /表鏡|表镜/i],
+  ['bezel', 'Bezel', /表圈/i],
+  ['strap', 'Strap', /表帶|表带/i],
+  ['clasp', 'Clasp', /錶扣|表扣/i],
+  ['waterResistance', 'Water Resistance', /防水/i],
 ];
 
 function cleanDescriptionText(value = '') {
@@ -696,25 +841,25 @@ function cleanDescriptionText(value = '') {
     .trim();
 }
 
-function descriptionList(value, lang = 'en') {
-  const source = cleanDescriptionText(value);
-  const sections = descriptionSections.map(([label, chineseMarker]) => {
-    const startMatch = new RegExp(`\\b${label.replace(' ', '\\s+')}\\b`, 'i').exec(source);
+function descriptionList(value, lang = 'en', labels = {}) {
+  const source = cleanLocalizedText(cleanDescriptionText(value), lang);
+  const sections = descriptionSections.map(([id, sourceLabel, chineseMarker]) => {
+    const startMatch = new RegExp(`\\b${sourceLabel.replace(' ', '\\s+')}\\b`, 'i').exec(source);
     if (!startMatch) return null;
     const valueStart = startMatch.index + startMatch[0].length;
     const tail = source.slice(valueStart);
     const markerMatch = chineseMarker.exec(tail);
     const nextLabel = descriptionSections
-      .map(([next]) => new RegExp(`\\b${next.replace(' ', '\\s+')}\\b`, 'i').exec(tail)?.index)
+      .map(([, next]) => new RegExp(`\\b${next.replace(' ', '\\s+')}\\b`, 'i').exec(tail)?.index)
       .filter(index => Number.isFinite(index) && index > 0)
       .sort((a, b) => a - b)[0];
     const end = markerMatch ? markerMatch.index : (Number.isFinite(nextLabel) ? nextLabel : tail.length);
     const detail = tail.slice(0, end).replace(/\s+/g, ' ').trim();
-    return detail ? { label, detail, order:startMatch.index } : null;
+    return detail ? { label:labels.detailLabels?.[id] || sourceLabel, detail, order:startMatch.index } : null;
   }).filter(Boolean).sort((a, b) => a.order - b.order);
 
   if (sections.length) return sections;
-  return source ? [{ label:lang === 'zh' ? '商品详情' : 'Details', detail:source, order:0 }] : [];
+  return source ? [{ label:labels.fallbackSection || (lang === 'zh' ? '商品详情' : 'Details'), detail:source, order:0 }] : [];
 }
 
 function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cartPulse, onBack, onCart, onProduct, onAdd }) {
@@ -727,9 +872,7 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const pageSize = 24;
-  const labels = lang === 'zh'
-    ? { back:'首页', title:'全部商品', subtitle:'新品、热销与精选腕表', search:'搜索品牌、型号或工厂', all:'全部', newest:'最新上架', pieces:'件商品', add:'加入购物车', video:'视频', more:'加载更多', loading:'正在加载…' }
-    : { back:'Home', title:'Shop All', subtitle:'New arrivals, bestsellers and selected watches', search:'Search brand, model or factory', all:'All', newest:'Newest first', pieces:'pieces', add:'Add to bag', video:'Video', more:'Load more', loading:'Loading…' };
+  const labels = getCommerceCopy(lang).shopPage;
 
   useEffect(() => {
     listPublishedBrands().then(setBrandOptions).catch(() => setBrandOptions([]));
@@ -773,9 +916,9 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
     }
   };
 
-  const goToPage = async () => {
+  const goToPageNumber = async targetPage => {
     const lastPage = Math.max(1, Math.ceil(total / pageSize));
-    const requested = Math.min(lastPage, Math.max(1, Number.parseInt(pageInput, 10) || 1));
+    const requested = Math.min(lastPage, Math.max(1, Number.parseInt(targetPage, 10) || 1));
     setPageInput(String(requested));
     setLoading(true);
     try {
@@ -786,6 +929,9 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
       window.scrollTo({ top:0, behavior:'smooth' });
     } finally { setLoading(false); }
   };
+
+  const goToPage = () => goToPageNumber(pageInput);
+  const goRelativePage = delta => goToPageNumber(page + 1 + delta);
 
   const displayed = catalog.map(product => catalogDisplayProduct(product, lang));
   const brandNames = brandOptions
@@ -816,7 +962,7 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
         <button className={brand === 'all' ? 'active' : ''} onClick={() => setBrand('all')}>{labels.all}</button>
         {brandNames.map(item => <button className={brand === item.value ? 'active' : ''} onClick={() => setBrand(item.value)} key={item.value}>{item.label}</button>)}
       </div>
-      <div className="shop-result-count">{total} {labels.pieces}</div>
+      <div className="shop-result-count">{formatCopy(labels.resultCount || `{count} ${labels.pieces}`, { count:total })}</div>
       <div className="shop-grid">
         {displayed.map((product, index) => {
           const media = product.mediaUrls?.length ? product.mediaUrls : [{ url:'/images/watch-aurelia-web.jpg', type:'image/jpeg' }];
@@ -841,7 +987,7 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
             <button className="shop-card-copy" onClick={() => onProduct(product)}>
               <span>{product.displayBrand}</span>
               <h2>{product.displayName}</h2>
-              <p>{product.description || (lang === 'zh' ? '精选高级腕表，支持查看完整图片、视频及商品资料。' : 'Selected timepiece with full images, video and product information.')}</p>
+              <p>{product.description || labels.fallbackDescription}</p>
             </button>
             <div className="shop-card-bottom">
               <strong>{money(product.price)}</strong>
@@ -850,23 +996,63 @@ function ShopPage({ products, initialBrand = 'all', lang, money, cartCount, cart
           </article>;
         })}
       </div>
-      {(catalog.length < total || loading) && <div className="shop-pagination">
-        <button onClick={loadMore} disabled={loading}>{loading ? labels.loading : labels.more}</button>
+      {!loading && displayed.length === 0 && <div className="shop-empty"><Search size={25}/><h2>{labels.empty}</h2><p>{labels.emptyHint}</p><button onClick={() => { setQuery(''); setBrand('all'); }}>{labels.clearFilters}</button></div>}
+      {(catalog.length < total || page > 0 || loading) && <div className="shop-pagination">
+        <button onClick={() => goRelativePage(-1)} disabled={loading || page === 0}>{labels.previous}</button>
         <span>{page + 1} / {Math.max(1, Math.ceil(total / pageSize))}</span>
-        <label>{lang === 'zh' ? '页码' : 'Page'}<input type="number" min="1" max={Math.max(1, Math.ceil(total / pageSize))} value={pageInput} onChange={event => setPageInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') goToPage(); }}/></label>
-        <button onClick={goToPage} disabled={loading}>{lang === 'zh' ? '跳转' : 'Go'}</button>
+        <label>{labels.page}<input type="number" min="1" max={Math.max(1, Math.ceil(total / pageSize))} value={pageInput} onChange={event => setPageInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') goToPage(); }}/></label>
+        <button onClick={goToPage} disabled={loading}>{labels.go}</button>
+        <button onClick={() => goRelativePage(1)} disabled={loading || page >= Math.max(0, Math.ceil(total / pageSize) - 1)}>{labels.next}</button>
+        {catalog.length < total && <button className="shop-pagination-more" onClick={loadMore} disabled={loading}>{loading ? labels.loading : labels.loadMore}</button>}
       </div>}
     </main>
   </div>;
 }
 
-function ShopProductPage({ product, products, lang, money, cartCount, cartPulse, onBack, onCart, onAdd, onProduct }) {
+function ShopProductPage({ product, products, lang, money, cartCount, cartPulse, onBack, onCart, onAdd, onCheckout, onProduct }) {
   const [mediaIndex, setMediaIndex] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+  const [lightboxScale, setLightboxScale] = useState(1);
+  const pageRef = useRef(null);
+  const railRef = useRef(null);
   const media = product.mediaUrls?.length ? product.mediaUrls : [{ url:'/images/watch-aurelia-web.jpg', type:'image/jpeg' }];
-  const descriptionItems = useMemo(() => descriptionList(product.description, lang), [product.description, lang]);
-  const labels = lang === 'zh'
-    ? { back:'返回商品', details:'商品详情', condition:'商品状态', conditionValue:'全新 / 未佩戴', delivery:'配送', deliveryValue:'全球安全配送', stock:'库存', add:'加入购物车', note:'商品说明', swipe:'左右滑动查看图片和视频' }
-    : { back:'Back to shop', details:'Product details', condition:'Condition', conditionValue:'New / Unworn', delivery:'Delivery', deliveryValue:'Secure worldwide delivery', stock:'Stock', add:'Add to bag', note:'Description', swipe:'Swipe through images and video' };
+  const labels = getCommerceCopy(lang).shopProduct;
+  const descriptionItems = useMemo(() => descriptionList(product.description, lang, labels), [product.description, lang, labels]);
+  const [videoErrors, setVideoErrors] = useState({});
+  useEffect(() => {
+    setMediaIndex(0);
+    setLightboxIndex(null);
+    setLightboxScale(1);
+    setVideoErrors({});
+    window.requestAnimationFrame(() => {
+      pageRef.current?.scrollTo({ top:0, behavior:'auto' });
+      window.scrollTo({ top:0, behavior:'auto' });
+    });
+  }, [product.id]);
+  useEffect(() => {
+    if (lightboxIndex === null) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [lightboxIndex]);
+  const goToMedia = index => {
+    const rail = railRef.current;
+    if (!rail) return;
+    rail.scrollTo({ left:index * rail.clientWidth, behavior:'smooth' });
+    setMediaIndex(index);
+  };
+  const openImage = index => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) {
+      setLightboxScale(1);
+      setLightboxIndex(index);
+    }
+  };
+  const openImageDesktop = index => {
+    if (typeof window === 'undefined' || !window.matchMedia?.('(pointer: coarse)').matches) {
+      setLightboxScale(1);
+      setLightboxIndex(index);
+    }
+  };
   const recommendations = useMemo(() => {
     const candidates = products.filter(item => item.id !== product.id);
     const seed = [...String(product.id)].reduce((sum, char) => sum + char.charCodeAt(0), 0);
@@ -877,7 +1063,9 @@ function ShopProductPage({ product, products, lang, money, cartCount, cartPulse,
       .map(entry => entry.item);
   }, [product.id, products]);
 
-  return <div className="shop-product-page">
+  const activeLightboxItem = lightboxIndex === null ? null : media[lightboxIndex];
+
+  return <div className="shop-product-page" ref={pageRef}>
     <header className="shop-header">
       <button onClick={onBack}><ArrowLeft size={18}/><span>{labels.back}</span></button>
       <SiteLogo/>
@@ -885,39 +1073,43 @@ function ShopProductPage({ product, products, lang, money, cartCount, cartPulse,
     </header>
     <main className="shop-product-layout">
       <section className="product-media-stage">
-        <div className="product-media-rail" onScroll={event => setMediaIndex(Math.round(event.currentTarget.scrollLeft / event.currentTarget.clientWidth))}>
-          {media.map((item, index) => item.type === 'embed'
+        <div className="product-media-rail" ref={railRef} onScroll={event => setMediaIndex(Math.round(event.currentTarget.scrollLeft / event.currentTarget.clientWidth))}>
+          {media.map((item, index) => item.type?.includes('embed')
             ? <iframe key={index} src={item.url} title={`${product.displayName} video ${index + 1}`} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen loading="lazy"/>
             : item.type?.startsWith('video')
-              ? <video key={index} src={item.url} controls playsInline preload="metadata"/>
-              : <img key={index} src={optimizedImage(item.url, 1400, 80)} alt={`${product.displayName} ${index + 1}`} loading={index ? 'lazy' : 'eager'} decoding="async"/>)}
+              ? <div className="product-video-frame" key={index}><video src={item.url} controls playsInline preload="metadata" onError={() => setVideoErrors(errors => ({ ...errors, [index]:true }))}/>{videoErrors[index] && <div className="product-video-fallback"><Play size={24}/><strong>{labels.videoUnavailable}</strong></div>}</div>
+              : <img key={index} src={optimizedImage(item.url, 1400, 80)} alt={`${product.displayName} ${index + 1}`} loading={index ? 'lazy' : 'eager'} decoding="async" onClick={() => openImage(index)} onDoubleClick={() => openImageDesktop(index)}/>)}
         </div>
         <div className="product-media-meta"><span>{mediaIndex + 1} / {media.length}</span><small>{labels.swipe}</small></div>
-        <div className="product-thumbnails">{media.map((item, index) => <button className={mediaIndex === index ? 'active' : ''} onClick={() => document.querySelector('.product-media-rail')?.scrollTo({ left:index * document.querySelector('.product-media-rail').clientWidth, behavior:'smooth' })} key={index}>{item.type === 'embed' ? <><span className="embed-thumb"/><Play size={14}/></> : item.type?.startsWith('video') ? <><video src={item.url} preload="none"/><Play size={14}/></> : <img src={optimizedImage(item.url, 160, 65)} loading="lazy" decoding="async" alt=""/>}</button>)}</div>
+        <div className="product-thumbnails">{media.map((item, index) => <button className={mediaIndex === index ? 'active' : ''} onClick={() => goToMedia(index)} key={index}>{item.type?.includes('embed') ? <><span className="embed-thumb"/><Play size={14}/></> : item.type?.startsWith('video') ? <><span className="video-thumb"/><Play size={14}/></> : <img src={optimizedImage(item.url, 160, 65)} loading="lazy" decoding="async" alt=""/>}</button>)}</div>
       </section>
       <section className="product-purchase">
         <p className="product-brand">{product.displayBrand}</p>
         <h1>{product.displayName}</h1>
         <strong className="product-price">{money(product.price)}</strong>
-        <div className="product-service-tags"><span><ShieldCheck size={16}/>{lang === 'zh' ? '品质检查' : 'Quality checked'}</span><span>{lang === 'zh' ? '全球送货' : 'Worldwide delivery'}</span></div>
+        <div className="product-service-tags"><span><ShieldCheck size={16}/>{labels.qualityChecked}</span><span>{labels.worldwideDelivery}</span></div>
         <div className="product-facts">
           <div><span>{labels.condition}</span><strong>{labels.conditionValue}</strong></div>
           <div><span>{labels.delivery}</span><strong>{labels.deliveryValue}</strong></div>
-          <div><span>{labels.stock}</span><strong>{product.stock > 0 ? (lang === 'zh' ? '现货' : 'In stock') : (lang === 'zh' ? '请询价' : 'Enquire')}</strong></div>
+          <div><span>{labels.stock}</span><strong>{product.stock > 0 ? labels.inStock : labels.enquire}</strong></div>
+          <div><span>{labels.source}</span><strong>{labels.sourceValue}</strong></div>
+          <div><span>{labels.documents}</span><strong>{labels.documentsValue}</strong></div>
         </div>
         <div className="product-description">
           <h2>{labels.note}</h2>
           <ul>
-            {(descriptionItems.length ? descriptionItems : [{ label:'Details', detail:'An OiWatch selected timepiece.', order:0 }]).map(item => (
+            <li><strong>{labels.source}</strong><span>{labels.sourceDetail}</span></li>
+            {(descriptionItems.length ? descriptionItems : [{ label:labels.fallbackSection, detail:labels.fallbackDescription, order:0 }]).map(item => (
               <li key={`${item.label}-${item.order}`}><strong>{item.label}</strong><span>{item.detail}</span></li>
             ))}
           </ul>
         </div>
         <button className="product-add-button" onClick={() => onAdd(product.cartItem)}><ShoppingBag size={18}/>{labels.add}<strong>{money(product.price)}</strong></button>
+        <button className="product-buy-button" onClick={() => onCheckout(product.cartItem)}><CreditCard size={18}/>{labels.buy}<ArrowRight size={17}/></button>
       </section>
       <aside className="product-recommendations">
-        <p>{lang === 'zh' ? '猜你喜欢' : 'You may also like'}</p>
-        <h2>{lang === 'zh' ? '随机推荐' : 'Selected for you'}</h2>
+        <p>{labels.recommendationsEyebrow}</p>
+        <h2>{labels.recommendationsTitle}</h2>
         <div>
           {recommendations.map(item => {
             const cover = item.mediaUrls?.[0];
@@ -928,36 +1120,54 @@ function ShopProductPage({ product, products, lang, money, cartCount, cartPulse,
           })}
         </div>
       </aside>
+      {activeLightboxItem && !activeLightboxItem.type?.startsWith('video') && !activeLightboxItem.type?.includes('embed') && <div className="product-lightbox" role="dialog" aria-modal="true" aria-label={labels.closeZoom}>
+        <button className="product-lightbox-close" onClick={() => setLightboxIndex(null)} aria-label={labels.closeZoom}><X size={20}/></button>
+        <div className="product-lightbox-tools">
+          <button onClick={() => setLightboxScale(scale => Math.max(1, scale - .25))} aria-label={labels.zoomOut}><ZoomOut size={18}/></button>
+          <button onClick={() => setLightboxScale(scale => Math.min(3, scale + .25))} aria-label={labels.zoomIn}><ZoomIn size={18}/></button>
+        </div>
+        <div className="product-lightbox-stage" onClick={() => setLightboxIndex(null)}>
+          <img src={optimizedImage(activeLightboxItem.url, 1800, 88)} alt={`${product.displayName} ${lightboxIndex + 1}`} style={{ transform:`scale(${lightboxScale})` }} onClick={event => { event.stopPropagation(); if (lightboxScale === 1) setLightboxIndex(null); }}/>
+        </div>
+      </div>}
     </main>
   </div>;
 }
 
 function PaymentGuide({ lang, activeTab, setActiveTab, onClose }) {
-  const chinese = lang === 'zh';
-  const content = {
-    why: chinese ? { title:'为什么提供两种付款方式', body:'我们保留加密货币与货到付款两种清晰的结算路径，方便不同地区的客户按自己的习惯选择。每笔订单都会生成订单编号、配送记录与状态更新，便于核对和追踪。' } : { title:'Why we offer two payment methods', body:'We keep two clear checkout paths, crypto and cash on delivery, so customers in different regions can choose what fits them. Every order has an order number, delivery record and status updates for straightforward tracking.' },
-    crypto: chinese ? { title:'加密货币付款', body:'确认订单后，选择币种并使用页面显示的钱包地址付款。提交交易哈希后可打开区块浏览器查看确认进度。请务必核对网络、币种、金额和订单号；链上交易一旦确认通常无法撤回。' } : { title:'Paying with crypto', body:'After confirming the order, choose an asset and pay to the wallet shown on the page. Submit the transaction hash, then open the block explorer to follow confirmations. Always check the network, asset, amount and order number; confirmed on-chain transactions are generally irreversible.' },
-    cod: chinese ? { title:'货到付款', body:'在支持的地区，订单会先完成地址与配送可行性确认，再安排可追踪发货。请在收货时按承运商及当地规定完成付款。货到付款是否可用会随目的地、订单金额和物流服务而变化。' } : { title:'Cash on delivery', body:'Where available, we confirm the delivery address and serviceability before arranging tracked dispatch. Payment is completed on delivery according to the carrier and local requirements. Availability varies by destination, order value and shipping service.' },
-    paypal: chinese ? { title:'为什么暂不提供 PayPal', body:'为了让付款、物流与售后记录保持一致，我们目前只提供能与订单和配送流程直接核对的结算方式。这样可以减少地址、付款人与收件信息不一致带来的延误，并让客户更容易查看自己的订单进度。' } : { title:'Why PayPal is not currently offered', body:'To keep payment, shipment and support records aligned, we currently use checkout methods that can be matched directly to the order and delivery flow. This helps reduce delays caused by mismatched payer, address and recipient information, while keeping order progress clear for customers.' },
-  }[activeTab];
-  const enhanced = {
-    crypto: chinese ? { title:'加密货币付款', body:'下单后选择币种与网络，复制付款地址或保存二维码，在你的钱包应用内发起转账。付款后提交交易哈希；页面会提供区块浏览器链接以查看确认进度。务必核对网络、币种、金额和订单号，链上确认后的交易通常无法撤回。', notes:['使用步骤：选择币种；在钱包内粘贴地址或扫描二维码；核对网络与金额；提交交易哈希；等待链上确认。','应用选择仅作一般信息：北美和欧洲常见 Coinbase、Kraken、Crypto.com；Binance 在许多国际地区可用；亚洲地区请选择当地合规可用的钱包或交易平台。请先确认当地法规、平台资格和资产支持情况。'] } : { title:'Paying with crypto', body:'Choose an asset and network, copy the payment address or save the QR code, then send from your own wallet app. Submit the transaction hash after payment; the order page links to a block explorer for confirmations. Always check network, asset, amount and order number. Confirmed on-chain transfers are generally irreversible.', notes:['How to pay: choose an asset; paste the address or scan the QR code in your wallet; check network and amount; submit the transaction hash; wait for on-chain confirmation.','App guidance is general information only: Coinbase, Kraken and Crypto.com are commonly used in North America and Europe; Binance is widely used internationally; in Asia, choose a locally compliant wallet or exchange. Check local rules, eligibility and supported assets first.'] },
-    cod: chinese ? { title:'货到付款', body:'货到付款仅在支持的目的地开放。该方式的订单总额比加密货币付款高 10%，并且需先支付运费；余额在签收时按承运商及当地规定支付。我们会先确认地址、物流服务能力和运费，再安排可追踪发货。' } : { title:'Cash on delivery', body:'Cash on delivery is available only for supported destinations. The total is 10% higher than crypto payment, and shipping must be paid in advance; the remaining balance is paid on delivery according to carrier and local requirements. We confirm the address, serviceability and shipping charge before tracked dispatch.' },
-    tracking: chinese ? { title:'货物追踪', body:'发货后会提供承运商和追踪号码。可使用以下官方追踪页面查询最新状态。' } : { title:'Shipment tracking', body:'After dispatch, you will receive the carrier name and tracking number. Use the official tracking pages below for current delivery status.' },
+  const guideLocale = getCommerceCopy(lang).paymentGuide;
+  const [paymentReference, setPaymentReference] = useState('');
+  const [referenceCopied, setReferenceCopied] = useState(false);
+  const openPaymentTracker = () => {
+    const trackerWindow = window.open(guideLocale.tracker.officialUrl, '_blank', 'noopener,noreferrer');
+    trackerWindow?.focus?.();
   };
-  const guide = enhanced[activeTab] || content;
-  const tabs = [['why', chinese ? '付款方式' : 'Payment options'], ['crypto', chinese ? '加密货币' : 'Crypto'], ['cod', chinese ? '货到付款' : 'Cash on delivery'], ['tracking', chinese ? '物流追踪' : 'Tracking'], ['paypal', chinese ? 'PayPal 说明' : 'PayPal']];
+  const copyPaymentReference = async () => {
+    if (!paymentReference.trim()) return;
+    try { await navigator.clipboard?.writeText(paymentReference.trim()); setReferenceCopied(true); window.setTimeout(() => setReferenceCopied(false), 1600); } catch { setReferenceCopied(false); }
+  };
+  const guide = guideLocale.sections[activeTab];
+  const tabs = Object.entries(guideLocale.tabs);
   return <div className="payment-guide-page">
-    <header className="payment-guide-header"><button onClick={onClose}><ArrowLeft size={17}/>{chinese ? '返回首页' : 'Back to home'}</button><SiteLogo/><span>{chinese ? '付款说明' : 'PAYMENT GUIDE'}</span></header>
+    <header className="payment-guide-header"><button onClick={onClose}><ArrowLeft size={17}/>{guideLocale.back}</button><SiteLogo/><span>{guideLocale.label}</span></header>
     <main className="payment-guide-content">
-      <section className="payment-guide-intro"><p className="kicker">{chinese ? '透明 · 可追踪 · 清晰' : 'CLEAR · TRACEABLE · SIMPLE'}</p><h1>{chinese ? '付款说明' : 'Payment guide'}</h1><p>{chinese ? '选择适合你的付款方式。以下说明帮助你在下单前了解每一步。' : 'Choose the checkout path that suits you. These notes explain what to expect before you place an order.'}</p></section>
-      <div className="payment-video-placeholders" aria-label={chinese ? '授权视频位置' : 'Licensed video placeholders'}><article><Play size={22}/><span>{chinese ? '诚信与安全故事视频位 01' : 'Trust & safety story 01'}</span></article><article><Play size={22}/><span>{chinese ? '诚信与安全故事视频位 02' : 'Trust & safety story 02'}</span></article></div>
-      <section className="payment-guide-layout"><nav>{tabs.map(([id,label]) => <button key={id} className={id === activeTab ? 'active' : ''} onClick={() => setActiveTab(id)}>{label}<ChevronRight size={16}/></button>)}</nav><article><p className="kicker">{chinese ? '订单支持' : 'ORDER SUPPORT'}</p><h2>{guide.title}</h2><p>{guide.body}</p>{guide.notes?.map(note => <p className="payment-guide-note" key={note}>{note}</p>)}{activeTab === 'tracking' && <div className="tracking-links">{[['DHL','https://www.dhl.com/global-en/home/tracking.html'],['FedEx','https://www.fedex.com/fedextrack/'],['UPS','https://www.ups.com/track'],['EMS','https://www.ems.post/en/global-network/tracking'],['SF Express','https://www.sf-international.com/us/en/dynamic_function/waybill/#search/bill-number/'],['Hongkong Post','https://webapp.hongkongpost.hk/en/mail_tracking/index.html'],['Aramex','https://www.aramex.com/us/en/track/shipments']].map(([name,url]) => <a key={name} href={url} target="_blank" rel="noreferrer">{name}<ArrowRight size={15}/></a>)}</div>}</article></section>
+      <section className="payment-guide-intro"><p className="kicker">{guideLocale.eyebrow}</p><h1>{guideLocale.title}</h1><p>{guideLocale.intro}</p></section>
+      <section className="payment-guide-layout"><nav>{tabs.map(([id,label]) => <button key={id} className={id === activeTab ? 'active' : ''} onClick={() => setActiveTab(id)}>{label}<ChevronRight size={16}/></button>)}</nav><article><p className="kicker">{guideLocale.support}</p><h2>{guide.title}</h2><p>{guide.body}</p>{guide.notes?.map(note => <p className="payment-guide-note" key={note}>{note}</p>)}{activeTab === 'protection' && <div className="protection-video-phones" aria-label={guideLocale.tabs.protection}>{guide.videoFallbacks.map(video => <article key={video.id}>{video.src ? <video src={video.src} controls playsInline preload="metadata" poster={video.poster || undefined}/> : <div className="protection-video-poster"><Play size={22}/><span>{video.title}</span></div>}<small>{video.status}</small><p>{video.body}</p></article>)}</div>}{activeTab === 'paymentStatus' && <div className="paygate-tracker"><div><ExternalLink size={18}/><strong>{guideLocale.tracker.title}</strong></div><label>{guideLocale.tracker.label}<input value={paymentReference} onChange={event => { setPaymentReference(event.target.value); setReferenceCopied(false); }} placeholder={guideLocale.tracker.placeholder} autoComplete="off" spellCheck="false"/></label><div className="tracker-actions"><button type="button" onClick={copyPaymentReference} disabled={!paymentReference.trim()}>{referenceCopied ? guideLocale.tracker.copied : guideLocale.tracker.copy}</button><button type="button" onClick={openPaymentTracker}>{guideLocale.tracker.open}<ExternalLink size={16}/></button></div><small>{guideLocale.tracker.note}</small><small>{guideLocale.tracker.privacy}</small></div>}{activeTab === 'tracking' && <div className="tracking-links">{guide.carriers.map(({name,url}) => <a key={name} href={url} target="_blank" rel="noreferrer">{name}<ArrowRight size={15}/></a>)}</div>}</article></section>
     </main>
   </div>;
 }
 
+function PackagingGuide({ lang, brands: brandList, onClose }) {
+  const labels = getCommerceCopy(lang).packagingGuide;
+  const items = Object.values(labels.items);
+  return <div className="packaging-page">
+    <header className="packaging-header"><button onClick={onClose}><ArrowLeft size={17}/>{labels.back}</button><SiteLogo/><span>{labels.eyebrow}</span></header>
+    <main className="packaging-content"><section className="packaging-intro"><p>{labels.eyebrow}</p><h1>{labels.title}</h1><span>{labels.intro}</span></section><div className="packaging-grid">{brandList.map((brand, index) => <article key={brand.en}><div className="packaging-visual"><Box size={28}/><span>{String(index + 1).padStart(2,'0')}</span></div><p>{lang === 'zh' ? brand.zh : brand.en}</p><h2>{formatCopy(labels.brandSet, { brand:brand.en })}</h2><ul>{items.map(item => <li key={item}><PackageCheck size={15}/>{item}</li>)}</ul><small>{labels.included}</small></article>)}</div><p className="packaging-note">{labels.note}</p><p className="packaging-note">{labels.sourceNote}</p><p className="packaging-note">{labels.confirmAction}</p></main>
+  </div>;
+}
+
 function App() {
+  const storedCheckoutFlow = useMemo(readStoredCheckoutFlow, []);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminGateOpen, setAdminGateOpen] = useState(() => window.location.pathname === '/admin');
   const [adminEmail, setAdminEmail] = useState('');
@@ -971,13 +1181,13 @@ function App() {
   const [menu, setMenu] = useState(false);
   const [selected, setSelected] = useState(null);
   const [sent, setSent] = useState(false);
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(readStoredCart);
   const [cartOpen, setCartOpen] = useState(false);
   const [brandPage, setBrandPage] = useState(null);
   const [catalogProduct, setCatalogProduct] = useState(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [checkoutStep, setCheckoutStep] = useState(1);
-  const [checkoutDetails, setCheckoutDetails] = useState(null);
+  const [checkoutStep, setCheckoutStep] = useState(() => Math.min(3, Math.max(1, Number(storedCheckoutFlow.step) || 1)));
+  const [checkoutDetails, setCheckoutDetails] = useState(readStoredCheckoutDetails);
   const [allProductsOpen, setAllProductsOpen] = useState(() => window.location.pathname.startsWith('/shop'));
   const [shopProductId, setShopProductId] = useState(() => {
     const match = window.location.pathname.match(/^\/shop\/product\/(.+)$/);
@@ -987,23 +1197,26 @@ function App() {
   const [remoteShopProduct, setRemoteShopProduct] = useState(null);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [paymentGuideOpen, setPaymentGuideOpen] = useState(false);
-  const [paymentGuideTab, setPaymentGuideTab] = useState('why');
+  const [paymentGuideTab, setPaymentGuideTab] = useState('protection');
+  const [packagingOpen, setPackagingOpen] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderError, setOrderError] = useState('');
-  const [paymentAsset, setPaymentAsset] = useState('USDT');
-  const [paymentMethod, setPaymentMethod] = useState('crypto');
-  const [paymentChannel, setPaymentChannel] = useState('gateway');
+  const [paymentAsset, setPaymentAsset] = useState(() => ['USDT','USDC','BTC','ETH','SOL'].includes(storedCheckoutFlow.asset) ? storedCheckoutFlow.asset : 'USDT');
+  const [paymentMethod, setPaymentMethod] = useState(() => storedCheckoutFlow.method === 'cod' ? 'cod' : 'crypto');
+  const [paymentChannel, setPaymentChannel] = useState(() => storedCheckoutFlow.channel === 'direct' ? 'direct' : 'gateway');
   const [paymentInvoice, setPaymentInvoice] = useState(null);
+  const [hostedPaymentUrl, setHostedPaymentUrl] = useState('');
+  const [hostedPopupBlocked, setHostedPopupBlocked] = useState(false);
   const [paymentProofStatus, setPaymentProofStatus] = useState('');
   const [paymentTxid, setPaymentTxid] = useState('');
   const [cartPulse, setCartPulse] = useState(false);
-  const [heroIndex, setHeroIndex] = useState(0);
-  const [reviewIndex, setReviewIndex] = useState(0);
   const watchRail = useRef(null);
   const t = copy[lang];
   const m = microcopy[lang];
   const q = qualityCopy[lang];
+  const commerce = getCommerceCopy(lang);
+  const checkoutCopy = commerce.checkout;
   const countryOptions = useMemo(() => {
     try {
       const names = new Intl.DisplayNames(['en'], { type:'region' });
@@ -1014,8 +1227,25 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = { zh:'zh-CN', en:'en', ja:'ja', ko:'ko', fr:'fr', de:'de', es:'es' }[lang];
     localStorage.setItem('oiwatch-language', lang);
-    document.body.style.overflow = selected || menu || cartOpen || brandPage || checkoutOpen || allProductsOpen || qualityOpen || paymentGuideOpen || adminGateOpen ? 'hidden' : '';
-  }, [lang, selected, menu, cartOpen, brandPage, checkoutOpen, allProductsOpen, qualityOpen, paymentGuideOpen, adminGateOpen]);
+    document.body.style.overflow = selected || menu || cartOpen || brandPage || checkoutOpen || allProductsOpen || qualityOpen || paymentGuideOpen || packagingOpen || adminGateOpen ? 'hidden' : '';
+  }, [lang, selected, menu, cartOpen, brandPage, checkoutOpen, allProductsOpen, qualityOpen, paymentGuideOpen, packagingOpen, adminGateOpen]);
+
+  useEffect(() => {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+  }, [cart]);
+
+  useEffect(() => {
+    if (checkoutDetails) localStorage.setItem(CHECKOUT_STORAGE_KEY, JSON.stringify(checkoutDetails));
+  }, [checkoutDetails]);
+
+  useEffect(() => {
+    localStorage.setItem(CHECKOUT_FLOW_STORAGE_KEY, JSON.stringify({
+      step:checkoutStep,
+      method:paymentMethod,
+      channel:paymentChannel,
+      asset:paymentAsset,
+    }));
+  }, [checkoutStep, paymentMethod, paymentChannel, paymentAsset]);
 
   useEffect(() => {
     localStorage.setItem('oiwatch-products', JSON.stringify(managedProducts.slice(0, 24)));
@@ -1044,14 +1274,6 @@ function App() {
     }))).then(hydrated => {
       if (hydrated.some((product,index) => product.media.some((media,mediaIndex) => media.url !== managedProducts[index]?.media[mediaIndex]?.url))) setManagedProducts(hydrated);
     });
-  }, []);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setHeroIndex(index => (index + 1) % watches.length);
-      setReviewIndex(index => (index + 1) % 3);
-    }, 4500);
-    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -1097,12 +1319,11 @@ function App() {
     window.setTimeout(() => setCartPulse(false), 900);
   };
 
-  const addBrandProduct = (brand, model, index, visual) => {
-    addToCart({
-      id: `${brand.en}-${model}-${index}`,
-      image: visual.image,
-      customMeta: { brand, lineIndex: index % brand.enLines.length, rare: index >= 4 },
-    });
+  const buyNow = watch => {
+    addToCart(watch);
+    setCartOpen(false);
+    setCheckoutStep(checkoutDetails ? 2 : 1);
+    setCheckoutOpen(true);
   };
 
   const changeQuantity = (id, amount) => {
@@ -1114,24 +1335,42 @@ function App() {
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
   const itemPrice = (item) => item.price || (item.customMeta ? 1650 + item.customMeta.lineIndex * 350 + (item.customMeta.rare ? 900 : 0) : ({ aurelia: 3200, celeste: 4200, monolith: 2600 }[item.id] || 2200));
   const cartTotal = cart.reduce((total, item) => total + itemPrice(item) * item.quantity, 0);
-  const money = value => new Intl.NumberFormat(lang === 'zh' ? 'zh-CN' : 'en-US', {
+  const locale = { zh:'zh-CN', en:'en-US', ja:'ja-JP', ko:'ko-KR', fr:'fr-FR', de:'de-DE', es:'es-ES' }[lang] || 'en-US';
+  const money = value => new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(Number(value));
-  const allStoreProducts = [
-    ...managedProducts.filter(product => product.status === 'published').map(product => ({ ...product, tags:deriveProductTags(product), sortDate:product.updatedAt || new Date().toISOString(), displayName:lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece', displayBrand:lang === 'zh' ? product.brandZh : product.brandEn || 'OiWatch', description:lang === 'zh' ? product.descriptionZh : product.translations?.[lang]?.description || product.descriptionEn || product.translations?.en?.description || 'Product information is being prepared.', mediaUrls:product.media?.map(media => ({ url:media.url, type:media.type })) || [], cartItem:{ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true } })),
-  ].sort((a,b) => new Date(b.sortDate)-new Date(a.sortDate));
+  const allStoreProducts = managedProducts
+    .filter(product => product.status === 'published' && isVerifiedStoreProduct(product))
+    .map(product => catalogDisplayProduct(product, lang))
+    .sort((a,b) => new Date(b.sortDate) - new Date(a.sortDate));
+  const cryptoChoices = [['USDT','TRC20'],['USDC','Polygon'],['BTC','Bitcoin'],['ETH','Ethereum'],['SOL','Solana']];
+  const selectedNetwork = cryptoChoices.find(([asset]) => asset === paymentAsset)?.[1] || '';
+  const settlementAsset = paymentChannel === 'gateway' ? 'USDC' : paymentAsset;
+  const settlementNetwork = paymentChannel === 'gateway' ? 'Polygon' : selectedNetwork;
   const submitOrder = async event => {
-    event.preventDefault();
+    event?.preventDefault?.();
     if (checkoutStep === 2) {
       setCheckoutStep(3);
       setOrderError('');
       return;
     }
-    setOrderSubmitting(true);
     setOrderError('');
-    if (!checkoutDetails) return;
+    if (!checkoutDetails) {
+      setCheckoutStep(1);
+      setOrderError(checkoutCopy.errors.requiredFields);
+      return;
+    }
+    setHostedPaymentUrl('');
+    setHostedPopupBlocked(false);
+    const hostedWindow = paymentChannel === 'gateway' ? window.open('', '_blank') : null;
+    if (hostedWindow) {
+      hostedWindow.opener = null;
+      hostedWindow.document.title = checkoutCopy.channels.hosted.title;
+      hostedWindow.document.body.textContent = checkoutCopy.channels.hosted.opening;
+    }
+    setOrderSubmitting(true);
     try {
       const orderNumber = `OI-${Date.now().toString(36).toUpperCase()}`;
       const items = cart.map(item => ({
@@ -1144,18 +1383,23 @@ function App() {
       const paymentResponse = await fetch('/.netlify/functions/create-crypto-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: orderNumber, amountUsd: paymentMethod === 'cod' ? 40 : cartTotal, orderTotal, asset: paymentAsset, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod, paymentChannel }),
+        body: JSON.stringify({ orderId: orderNumber, amountUsd: paymentMethod === 'cod' ? 40 : cartTotal, orderTotal, asset:settlementAsset, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod, paymentChannel }),
       });
       const payment = await paymentResponse.json().catch(() => null);
-      if (!paymentResponse.ok) throw new Error(payment?.error || 'Unable to create a crypto payment.');
+      if (!paymentResponse.ok) throw new Error(payment?.error || `Payment request failed (${paymentResponse.status})`);
       if (payment.paymentUrl) {
-        window.location.assign(payment.paymentUrl);
+        setHostedPaymentUrl(payment.paymentUrl);
+        if (hostedWindow) hostedWindow.location.replace(payment.paymentUrl);
+        else setHostedPopupBlocked(true);
         return;
       }
+      hostedWindow?.close();
       setPaymentInvoice(payment);
       setOrderPlaced(true);
     } catch (error) {
-      setOrderError(error.message || 'Unable to submit the order.');
+      hostedWindow?.close();
+      console.warn('Payment creation failed.', error);
+      setOrderError(checkoutCopy.errors.paymentCreateFailed);
     } finally {
       setOrderSubmitting(false);
     }
@@ -1163,13 +1407,14 @@ function App() {
   const confirmDeliveryDetails = event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    if (['customerName','email','phone','country','streetAddress','postalCode'].some(key => !String(data.get(key) || '').trim())) { setOrderError('Please complete every contact and delivery field.'); return; }
+    if (['customerName','email','phone','country','streetAddress','postalCode'].some(key => !String(data.get(key) || '').trim())) { setOrderError(checkoutCopy.errors.requiredFields); return; }
     setCheckoutDetails(Object.fromEntries(data.entries()));
     setCheckoutStep(2);
     setOrderError('');
   };
   const confirmPaymentMethod = event => {
     event.preventDefault();
+    if (paymentMethod === 'cod' && paymentChannel === 'gateway') setPaymentAsset('USDC');
     setCheckoutStep(3);
     setOrderError('');
   };
@@ -1179,14 +1424,14 @@ function App() {
     const screenshot = form.get('screenshot');
     const txid = String(form.get('txid') || '').trim();
     if (!txid && !(screenshot instanceof File && screenshot.size)) {
-      setPaymentProofStatus('Add a transaction hash or payment screenshot.');
+      setPaymentProofStatus('required');
       return;
     }
-    setPaymentProofStatus('Submitting proof...');
+    setPaymentProofStatus('submitting');
     let screenshotData = null;
     if (screenshot instanceof File && screenshot.size) {
       if (!screenshot.type.startsWith('image/') || screenshot.size > 5 * 1024 * 1024) {
-        setPaymentProofStatus('Screenshot must be an image no larger than 5 MB.');
+        setPaymentProofStatus('screenshotInvalid');
         return;
       }
       screenshotData = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(screenshot); });
@@ -1194,18 +1439,26 @@ function App() {
     try {
       const response = await fetch('/.netlify/functions/submit-crypto-proof', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ orderId:paymentInvoice.orderId, asset:paymentInvoice.asset, txid, screenshotData, screenshotName:screenshot instanceof File ? screenshot.name : '' }) });
       const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || 'Unable to submit proof.');
+      if (!response.ok) throw new Error(result?.error || `Proof request failed (${response.status})`);
       setPaymentTxid(txid);
-      setPaymentProofStatus('Checking payment on-chain...');
+      if (!txid) {
+        setPaymentProofStatus('pending');
+        event.currentTarget.reset();
+        return;
+      }
+      setPaymentProofStatus('checking');
       const verificationResponse = await fetch('/.netlify/functions/verify-crypto-payment', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ orderId:paymentInvoice.orderId, asset:paymentInvoice.asset, txid }) });
       const verification = await verificationResponse.json().catch(() => null);
-      if (!verificationResponse.ok) throw new Error(verification?.error || 'Unable to verify payment.');
+      if (!verificationResponse.ok) throw new Error(verification?.error || `Verification request failed (${verificationResponse.status})`);
       setPaymentTxid(verification.txid || txid);
-      setPaymentProofStatus(verification.status === 'completed' ? 'Payment completed.' : 'Payment submitted. Waiting for blockchain confirmation.');
+      setPaymentProofStatus(verification.status === 'completed' ? 'completed' : 'pending');
       event.currentTarget.reset();
-    } catch (error) { setPaymentProofStatus(error.message || 'Unable to submit proof.'); }
+    } catch (error) {
+      console.warn('Payment evidence submission failed.', error);
+      setPaymentProofStatus('failed');
+    }
   };
-  const paymentExplorerUrl = paymentTxid ? ({ BTC:`https://mempool.space/tx/${paymentTxid}`, ETH:`https://etherscan.io/tx/${paymentTxid}`, USDC:`https://etherscan.io/tx/${paymentTxid}`, USDT:`https://tronscan.org/#/transaction/${paymentTxid}`, SOL:`https://solscan.io/tx/${paymentTxid}` }[paymentInvoice?.asset] || null) : null;
+  const paymentExplorerUrl = paymentTxid ? ({ BTC:`https://mempool.space/tx/${paymentTxid}`, ETH:`https://etherscan.io/tx/${paymentTxid}`, USDC:`https://polygonscan.com/tx/${paymentTxid}`, USDT:`https://tronscan.org/#/transaction/${paymentTxid}`, SOL:`https://solscan.io/tx/${paymentTxid}` }[paymentInvoice?.asset] || null) : null;
   const navigateShop = (path) => {
     window.history.pushState({}, '', path);
     setAllProductsOpen(path.startsWith('/shop'));
@@ -1218,14 +1471,14 @@ function App() {
     navigateShop('/shop');
   };
   const openShopBrand = brand => {
-    setShopBrand(lang === 'zh' ? brand.zh : brand.en);
+    setShopBrand(brand.en);
     navigateShop('/shop');
   };
   const closeShop = () => navigateShop('/');
   const openShopProduct = product => navigateShop(`/shop/product/${encodeURIComponent(product.id)}`);
   const shopProduct = remoteShopProduct || allStoreProducts.find(product => String(product.id) === String(shopProductId));
   const openWhatsApp = () => {
-    const text = encodeURIComponent(lang === 'zh' ? '您好，我想咨询 OiWatch 的私人腕表服务。' : 'Hello, I would like to enquire about OiWatch private watch services.');
+    const text = encodeURIComponent(whatsappEnquiryCopy[lang] || whatsappEnquiryCopy.en);
     const whatsappNumber = String(siteSettings.whatsapp || '+852 6651 0124').replace(/\D/g, '');
     window.open(`https://wa.me/${whatsappNumber}?text=${text}`, '_blank', 'noopener,noreferrer');
   };
@@ -1277,42 +1530,15 @@ function App() {
       <header className="nav">
         <button className="menu-btn" onClick={() => setMenu(true)} aria-label="菜单"><Menu size={21}/></button>
         <SiteLogo onClick={() => scrollTo('home')}/>
-        <nav><button onClick={openShop}>{lang === 'zh' ? '全部商品' : 'All watches'}</button><button onClick={() => scrollTo('brands')}>{lang === 'zh' ? '品牌' : 'Maisons'}</button><button onClick={() => scrollTo('story')}>{lang === 'zh' ? '我们的故事' : 'Our story'}</button><button onClick={() => setPaymentGuideOpen(true)}>{lang === 'zh' ? '付款说明' : 'Payment guide'}</button></nav>
+        <nav><button onClick={openShop}>{m.allProducts}</button><button onClick={() => scrollTo('brands')}>{m.maisons}</button><button onClick={() => scrollTo('story')}>{m.story}</button><button onClick={() => setPaymentGuideOpen(true)}>{m.paymentGuide}</button><button onClick={() => setPackagingOpen(true)}>{m.packaging}</button></nav>
         <div className="nav-actions">
           <label className="language-picker"><Globe2 size={15}/><select value={lang} onChange={event => setLang(event.target.value)} aria-label={m.language}>{languageOptions.map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></label>
-          <button className={`cart-trigger cart-prominent ${cartPulse ? 'cart-pulse' : ''}`} onClick={() => setCartOpen(true)} aria-label={m.cart}><ShoppingBag size={21}/><b>{lang === 'zh' ? '购物车' : 'Bag'}</b><span>{cartCount}</span></button>
+          <button className={`cart-trigger cart-prominent ${cartPulse ? 'cart-pulse' : ''}`} onClick={() => setCartOpen(true)} aria-label={m.cart}><ShoppingBag size={21}/><b>{m.bagShort}</b><span>{cartCount}</span></button>
           <button className="enquire" onClick={openWhatsApp}>{m.enquire}</button>
         </div>
       </header>
 
       <main>
-        <section className="commerce-hero legacy-hero" id="home">
-          <div className="bestseller-slider">
-            {watches.map((watch, index) => {
-              const content = getWatchContent(watch.id, lang);
-              return <article className={heroIndex === index ? 'active' : ''} key={watch.id}>
-                <img src={watch.image} alt={content.name}/>
-                <div className="slide-shade"/>
-                <div className="slide-content">
-                  <p>{lang === 'zh' ? '热销商品' : 'BESTSELLERS'}</p>
-                  <h1>{content.name}</h1>
-                  <span>{content.subtitle}</span>
-                  <div><button className="primary" onClick={() => openShopProduct(allStoreProducts.find(product => product.id === watch.id))}>{t.view}<ArrowRight size={17}/></button><button className="text-link" onClick={() => addToCart(watch)}>{m.add}</button></div>
-                </div>
-              </article>;
-            })}
-            <div className="slider-dots">{watches.map((watch,index)=><button className={heroIndex===index?'active':''} onClick={()=>setHeroIndex(index)} key={watch.id}/>)}</div>
-          </div>
-          <div className="review-slider">
-            {[
-              { image:'/images/watch-aurelia-web.jpg', zh:'从咨询到交付，每一个细节都令人安心。', en:'Every detail, from consultation to delivery, inspired confidence.' },
-              { image:'/images/watch-celeste-web.jpg', zh:'专属顾问非常专业，帮我找到期待已久的款式。', en:'My advisor found the piece I had been seeking for years.' },
-              { image:'/images/watch-monolith-web.jpg', zh:'鉴证透明、沟通迅速，是值得长期信赖的伙伴。', en:'Transparent authentication and responsive service — a trusted partner.' },
-            ].map((review,index)=><article className={reviewIndex===index?'active':''} key={index}><img src={review.image} alt=""/><div className="review-shade"/><div><p>{lang==='zh'?'客户评价':'CLIENT STORIES'}</p><blockquote>“{lang==='zh'?review.zh:review.en}”</blockquote><span>OiWatch {lang==='zh'?'私人客户':'PRIVATE CLIENT'}</span></div></article>)}
-            <div className="review-count">0{reviewIndex+1} / 03</div>
-          </div>
-        </section>
-
         <section className="collection section immersive-collection" id="collection" onMouseMove={event => { const box = event.currentTarget.getBoundingClientRect(); event.currentTarget.style.setProperty('--pointer-x', `${((event.clientX - box.left) / box.width) * 100}%`); event.currentTarget.style.setProperty('--pointer-y', `${((event.clientY - box.top) / box.height) * 100}%`); }}>
           <div className="section-heading">
             <div><p className="kicker">{t.featured}</p><h2>{t.sectionTitle}</h2></div>
@@ -1322,30 +1548,13 @@ function App() {
             <span>{m.swipe}</span>
           </div>
           <div className="watch-grid" ref={watchRail}>
-            {managedProducts.filter(product => product.status === 'published').slice(0, 8).map((product, i) => (
+            {managedProducts.filter(product => product.status === 'published' && isVerifiedStoreProduct(product)).slice(0, 8).map((product, i) => (
               <article className="watch-card managed-card" key={product.id} role="button" tabIndex="0" onClick={() => openShopProduct(catalogDisplayProduct(product, lang))} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openShopProduct(catalogDisplayProduct(product, lang)); } }}>
-                <div className="card-index">{lang === 'zh' ? '新品' : 'NEW'}</div>
-                {product.media?.[0]?.type?.startsWith('video') ? <video src={product.media[0].url} muted loop autoPlay playsInline preload="metadata"/> : <img src={optimizedImage(product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', 760)} loading={i > 2 ? 'lazy' : 'eager'} decoding="async" alt={lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece'}/>} 
-                <div className="card-info"><p>{lang === 'zh' ? product.brandZh : product.brandEn || 'OiWatch'}</p><h3>{lang === 'zh' ? product.nameZh : product.translations?.[lang]?.name || product.nameEn || product.translations?.en?.name || 'Selected timepiece'}</h3><span>{money(product.price)}</span><div className="card-actions"><button onClick={() => openShopProduct(catalogDisplayProduct(product, lang))}>{t.view}<ArrowRight size={15}/></button><button className="add-cart" onClick={() => addToCart({ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true })}><ShoppingBag size={14}/>{m.add}</button></div></div>
+                <div className="card-index">{m.newItem}</div>
+                {product.media?.[0]?.type?.startsWith('video') ? <video src={product.media[0].url} muted loop autoPlay playsInline preload="metadata"/> : <img src={optimizedImage(product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', 760)} loading={i > 2 ? 'lazy' : 'eager'} decoding="async" alt={localizedProductValue(product, lang, 'name')}/>}
+                <div className="card-info"><p>{cleanLocalizedText(lang === 'zh' ? product.brandZh : product.brandEn, lang) || 'OiWatch'}</p><h3>{localizedProductValue(product, lang, 'name')}</h3><span>{money(product.price)}</span><div className="card-actions"><button onClick={() => openShopProduct(catalogDisplayProduct(product, lang))}>{t.view}<ArrowRight size={15}/></button><button className="add-cart" onClick={() => addToCart({ ...product, image:product.media?.[0]?.url || '/images/watch-aurelia-web.jpg', customManaged:true })}><ShoppingBag size={14}/>{m.add}</button></div></div>
               </article>
             ))}
-            {false && watches.map((watch, i) => {
-              const content = getWatchContent(watch.id, lang);
-              return (
-              <article className={`watch-card ${watch.tone}`} key={watch.id}>
-                <div className="card-index">0{i+1}</div>
-                <img src={watch.image} alt={content.name} loading={i ? 'lazy' : 'eager'}/>
-                <div className="card-info">
-                  <p>{content.collection}</p>
-                  <h3>{content.name}</h3>
-                  <span>{content.subtitle}</span>
-                  <div className="card-actions">
-                    <button onClick={() => openShopProduct(allStoreProducts.find(product => product.id === watch.id))}>{t.view}<ArrowRight size={15}/></button>
-                    <button className="add-cart" onClick={() => addToCart(watch)}><ShoppingBag size={14}/>{m.add}</button>
-                  </div>
-                </div>
-              </article>
-            )})}
           </div>
           <button className="outline" onClick={openShop}>{t.all}<ChevronRight size={17}/></button>
         </section>
@@ -1355,7 +1564,7 @@ function App() {
             <p className="kicker">{m.brands}</p>
             <h2>{m.byBrand}</h2>
           </div>
-          <div className="brand-rail" aria-label={lang === 'zh' ? '腕表品牌' : 'Watch brands'}>
+          <div className="brand-rail" aria-label={m.watchBrands}>
             {brands.map((brand, index) => (
               <button className="brand-tile" key={brand.en} onClick={() => openShopBrand(brand)}>
                 <span className="brand-logo">
@@ -1374,14 +1583,14 @@ function App() {
         </section>
 
         <section className="story" id="story">
-          <div className="story-image" aria-hidden="true"><div className="seal"><Clock3/><span>SUPER CLONE<br/>1:1</span></div></div>
+          <div className="story-image" aria-hidden="true"><div className="seal"><Clock3/><span>SOURCE<br/>CHECKED</span></div></div>
           <div className="story-content">
             <p className="kicker">{t.storyKicker}</p>
             <h2>{t.storyTitle}</h2>
             <p>{t.storyBody}</p>
             <div className="credentials">
-              <div><ShieldCheck/><strong>1:1</strong><span>{q.best}</span></div>
-              <div><Sparkles/><strong>TOP</strong><span>{lang === 'zh' ? '顶级细节' : lang === 'ja' ? '最高級の細部' : lang === 'ko' ? '최상급 디테일' : lang === 'fr' ? 'Détails premium' : lang === 'de' ? 'Premium-Details' : lang === 'es' ? 'Detalles prémium' : 'Premium details'}</span></div>
+              <div><ShieldCheck/><strong>SRC</strong><span>{q.best}</span></div>
+              <div><Sparkles/><strong>ITEM</strong><span>{lang === 'zh' ? '实物核验' : lang === 'ja' ? '商品確認' : lang === 'ko' ? '상품 확인' : lang === 'fr' ? 'Article vérifié' : lang === 'de' ? 'Ware geprüft' : lang === 'es' ? 'Artículo verificado' : 'Item checked'}</span></div>
               <div><Globe2/><strong>QC</strong><span>{lang === 'zh' ? '交付前检查' : lang === 'ja' ? '出荷前検品' : lang === 'ko' ? '출고 전 검사' : lang === 'fr' ? 'Contrôle final' : lang === 'de' ? 'Endkontrolle' : lang === 'es' ? 'Control final' : 'Final inspection'}</span></div>
             </div>
             <button className="text-link dark-link">{t.learn}<ArrowRight size={15}/></button>
@@ -1390,10 +1599,10 @@ function App() {
 
       </main>
 
-      <section className="shipping-partners" aria-label={lang === 'zh' ? '全球配送伙伴' : 'Worldwide delivery partners'}>
+      <section className="shipping-partners" aria-label={m.shippingPartners}>
         <div className="shipping-copy">
-          <p>{lang === 'zh' ? '全球配送伙伴' : 'WORLDWIDE DELIVERY PARTNERS'}</p>
-          <span>{lang === 'zh' ? '安全包装 · 全程追踪 · 全球送达' : 'Secure packing · End-to-end tracking · Worldwide delivery'}</span>
+          <p>{m.shippingPartners}</p>
+          <span>{m.shippingTagline}</span>
         </div>
         <div className="shipping-logos">
           <span className="courier-logo dhl" aria-label="DHL">DHL</span>
@@ -1409,13 +1618,14 @@ function App() {
 
       <footer>
         <SiteLogo/>
-        <p>{lang === 'zh' ? 'OiWatch 全球送货' : 'OIWATCH WORLDWIDE DELIVERY'}</p>
+        <p>{m.worldwideDelivery}</p>
         <span>© 2026 OIWATCH</span>
       </footer>
 
-      {menu && <div className="mobile-menu"><button className="close" onClick={() => setMenu(false)}><X/></button><SiteLogo/><button onClick={() => { setMenu(false); openShop(); }}>{lang === 'zh' ? '全部商品' : 'All watches'}</button><button onClick={() => scrollTo('brands')}>{lang === 'zh' ? '品牌' : 'Maisons'}</button><button onClick={() => scrollTo('story')}>{lang === 'zh' ? '我们的故事' : 'Our story'}</button><button onClick={() => { setMenu(false); setPaymentGuideOpen(true); }}>{lang === 'zh' ? '付款说明' : 'Payment guide'}</button><label className="language-picker"><Globe2/><select value={lang} onChange={event => setLang(event.target.value)}>{languageOptions.map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></label></div>}
+      {menu && <div className="mobile-menu"><button className="close" onClick={() => setMenu(false)}><X/></button><SiteLogo/><button onClick={() => { setMenu(false); openShop(); }}>{m.allProducts}</button><button onClick={() => scrollTo('brands')}>{m.maisons}</button><button onClick={() => scrollTo('story')}>{m.story}</button><button onClick={() => { setMenu(false); setPaymentGuideOpen(true); }}>{m.paymentGuide}</button><button onClick={() => { setMenu(false); setPackagingOpen(true); }}>{m.packaging}</button><label className="language-picker"><Globe2/><select value={lang} onChange={event => setLang(event.target.value)}>{languageOptions.map(([code,label]) => <option key={code} value={code}>{label}</option>)}</select></label></div>}
 
       {paymentGuideOpen && <PaymentGuide lang={lang} activeTab={paymentGuideTab} setActiveTab={setPaymentGuideTab} onClose={() => setPaymentGuideOpen(false)}/>} 
+      {packagingOpen && <PackagingGuide lang={lang} brands={brands} onClose={() => setPackagingOpen(false)}/>}
 
       {adminGateOpen && <div className="admin-gate-backdrop" onClick={() => setAdminGateOpen(false)}>
         <form className="admin-gate" onSubmit={verifyAdminLogin} onClick={event => event.stopPropagation()}>
@@ -1431,7 +1641,7 @@ function App() {
       </div>}
 
       {qualityOpen && <div className="quality-page">
-        <header className="quality-header"><button onClick={() => setQualityOpen(false)}><ArrowLeft size={17}/>{q.back}</button><SiteLogo/><span>SUPER CLONE 1:1</span></header>
+        <header className="quality-header"><button onClick={() => setQualityOpen(false)}><ArrowLeft size={17}/>{q.back}</button><SiteLogo/><span>SOURCE &amp; DELIVERY</span></header>
         <div className="quality-hero"><p className="kicker">{q.kicker}</p><h1>{q.title}</h1><p>{q.intro}</p></div>
         <div className="quality-comparison">
           {[{title:q.super,badge:q.best,points:q.superPoints,premium:true},{title:q.aaa,badge:q.cheap,points:q.aaaPoints}].map(group=><article className={group.premium?'premium':''} key={group.title}><span>{group.badge}</span><h2>{group.title}</h2><ul>{group.points.map(point=><li key={point}><ShieldCheck size={17}/><p>{point}</p></li>)}</ul></article>)}
@@ -1440,39 +1650,8 @@ function App() {
       </div>}
 
       {allProductsOpen && (shopProduct
-        ? <ShopProductPage product={shopProduct} products={allStoreProducts} lang={lang} money={money} cartCount={cartCount} cartPulse={cartPulse} onBack={() => navigateShop('/shop')} onCart={() => setCartOpen(true)} onAdd={addToCart} onProduct={openShopProduct}/>
+        ? <ShopProductPage product={shopProduct} products={allStoreProducts} lang={lang} money={money} cartCount={cartCount} cartPulse={cartPulse} onBack={() => navigateShop('/shop')} onCart={() => setCartOpen(true)} onAdd={addToCart} onCheckout={buyNow} onProduct={openShopProduct}/>
         : <ShopPage products={allStoreProducts} initialBrand={shopBrand} lang={lang} money={money} cartCount={cartCount} cartPulse={cartPulse} onBack={closeShop} onCart={() => setCartOpen(true)} onProduct={openShopProduct} onAdd={addToCart}/>)}
-
-      {false && <div className="all-products-page">
-        <header className="all-products-header">
-          <button onClick={() => setAllProductsOpen(false)}><ArrowLeft size={17}/>{lang === 'zh' ? '返回首页' : 'Back to home'}</button>
-          <SiteLogo/>
-          <button className={`cart-trigger ${cartPulse ? 'cart-pulse' : ''}`} onClick={() => setCartOpen(true)} aria-label={m.cart}><ShoppingBag size={17}/><span>{cartCount}</span></button>
-        </header>
-        <div className="all-products-content">
-          <div className="all-products-title">
-            <div><p className="kicker">{lang === 'zh' ? '全部在售时计' : 'ALL AVAILABLE PIECES'}</p><h1>{lang === 'zh' ? '最新上架' : 'New Arrivals'}</h1></div>
-            <span>{lang === 'zh' ? `共 ${allStoreProducts.length} 件商品 · 按上架时间由新到旧` : `${allStoreProducts.length} pieces · Newest first`}</span>
-          </div>
-          <div className="all-products-grid">
-            {allStoreProducts.map((product, index) => <article key={product.id}>
-              <div className="all-product-media">
-                {(product.mediaUrls.length ? product.mediaUrls : [{ url:'/images/watch-aurelia-web.jpg', type:'image/jpeg' }]).map((media, mediaIndex) =>
-                  media.type?.startsWith('video')
-                    ? <video key={mediaIndex} src={media.url} controls playsInline/>
-                    : <img key={mediaIndex} src={media.url} alt={product.displayName} loading={index > 2 ? 'lazy' : 'eager'}/>
-                )}
-              </div>
-              <div className="all-product-info">
-                <p>{product.displayBrand}</p>
-                <h2>{product.displayName}</h2>
-                <small>{new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : 'en-GB', { year:'numeric', month:'short', day:'numeric' }).format(new Date(product.sortDate))}</small>
-                <div><strong>{money(product.price)}</strong><button onClick={() => addToCart(product.cartItem)}><ShoppingBag size={15}/>{m.add}</button></div>
-              </div>
-            </article>)}
-          </div>
-        </div>
-      </div>}
 
       {selected && <div className="drawer-backdrop" onClick={() => setSelected(null)}>
         <aside className="drawer" onClick={e => e.stopPropagation()}>
@@ -1488,15 +1667,15 @@ function App() {
 
       {brandPage && <div className="brand-page">
         <header className="brand-page-header">
-          <button onClick={() => setBrandPage(null)}><ArrowLeft size={17}/>{lang === 'zh' ? '返回品牌总览' : 'Back to brands'}</button>
+          <button onClick={() => setBrandPage(null)}><ArrowLeft size={17}/>{m.brandBack}</button>
           <SiteLogo/>
           <div className="brand-header-actions"><button className={`cart-trigger ${cartPulse ? 'cart-pulse' : ''}`} onClick={() => setCartOpen(true)}><ShoppingBag size={17}/><span>{cartCount}</span></button><button onClick={openWhatsApp}><MessageCircle size={17}/>{m.enquire}</button></div>
         </header>
         <div className="brand-page-hero">
           <img src={brandLogoOverrides[brandPage.en] || `https://logos.hunter.io/${brandDomains[brandPage.index]}`} alt={`${lang === 'zh' ? brandPage.zh : brandPage.en} Logo`}/>
-          <p>{lang === 'zh' ? '品牌腕表目录' : 'MAISON CATALOGUE'}</p>
+          <p>{m.brandCatalogue}</p>
           <h1>{lang === 'zh' ? brandPage.zh : brandPage.en}</h1>
-          <span>{lang === 'zh' ? '精选在售与全球寻表服务' : 'Curated availability and worldwide sourcing'}</span>
+          <span>{m.brandIntro}</span>
         </div>
         <div className="brand-watch-grid">
           {Array.from({ length: 5 }, (_, index) => {
@@ -1504,16 +1683,13 @@ function App() {
             const model = lines[index % lines.length];
             const visual = watches[index % watches.length];
             const officialModel = brandPage.enLines[index % brandPage.enLines.length];
-            const productImage = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(`${brandPage.en} ${officialModel} official watch`)}&w=900&h=900&c=7&rs=1&p=0`;
+            const productImage = visual.image;
             const product = { brand: brandPage, model, officialModel, index, visual, productImage };
             return <article key={`${model}-${index}`}>
               <button className="brand-watch-image" onClick={() => setCatalogProduct(product)}><img src={productImage} alt={model} onError={event => { event.currentTarget.src = visual.image; }}/><span>0{index + 1}</span></button>
               <p>{lang === 'zh' ? brandPage.zh : brandPage.en}</p>
               <h3>{model}</h3>
-              <small>{lang === 'zh' ? (index < 4 ? '经典精选' : '珍罕配置') : (index < 4 ? 'Signature selection' : 'Rare configuration')}</small>
-              <div className="brand-product-actions">
-                <button onClick={() => addBrandProduct(brandPage, model, index, visual)}><ShoppingBag size={14}/>{m.add}</button>
-              </div>
+              <small>{m.collectionReference}</small>
             </article>;
           })}
         </div>
@@ -1529,14 +1705,13 @@ function App() {
           <div className="catalog-info">
             <p>{lang === 'zh' ? catalogProduct.brand.zh : catalogProduct.brand.en}</p>
             <h2>{catalogProduct.model}</h2>
-            <div className="catalog-badges"><span>{lang === 'zh' ? '专业鉴证' : 'Authenticated'}</span><span>{lang === 'zh' ? '全球寻表' : 'Worldwide sourcing'}</span></div>
+            <div className="catalog-badges"><span>{m.orderReviewed}</span><span>{m.worldwideSourcing}</span></div>
             <div className="catalog-spec-list">
-              <div><span>{lang === 'zh' ? '商品状态' : 'Condition'}</span><strong>{lang === 'zh' ? '全新 / 未佩戴' : 'New / Unworn'}</strong></div>
-              <div><span>{lang === 'zh' ? '随附物品' : 'Included'}</span><strong>{lang === 'zh' ? '原装表盒及证书' : 'Original box and papers'}</strong></div>
-              <div><span>{lang === 'zh' ? '交付方式' : 'Delivery'}</span><strong>{lang === 'zh' ? '全球安全配送' : 'Secure worldwide delivery'}</strong></div>
+              <div><span>{m.condition}</span><strong>{m.confirmedBeforePayment}</strong></div>
+              <div><span>{m.included}</span><strong>{m.confirmedPerOrder}</strong></div>
+              <div><span>{m.delivery}</span><strong>{m.secureWorldwide}</strong></div>
             </div>
-            <p className="catalog-note">{lang === 'zh' ? '具体年份、配置、价格与库存由专属顾问确认。所有腕表在交付前均经过独立鉴证。' : 'Year, configuration, pricing and availability are confirmed by your private advisor. Every piece is independently authenticated before delivery.'}</p>
-            <button className="primary" onClick={() => { addBrandProduct(catalogProduct.brand, catalogProduct.model, catalogProduct.index, catalogProduct.visual); setCatalogProduct(null); }}><ShoppingBag size={17}/>{m.add}</button>
+            <p className="catalog-note">{m.catalogueNote}</p>
           </div>
         </section>
       </div>}
@@ -1544,17 +1719,17 @@ function App() {
       {cartOpen && <div className="cart-backdrop" onClick={() => setCartOpen(false)}>
         <aside className="cart-panel" onClick={event => event.stopPropagation()}>
           <div className="cart-header">
-            <div><span>{lang === 'zh' ? '私人选购' : 'PRIVATE SELECTION'}</span><h2>{lang === 'zh' ? '购物车' : 'Shopping bag'}</h2></div>
+            <div><span>{m.cartKicker}</span><h2>{m.cart}</h2></div>
             <button className="close" onClick={() => setCartOpen(false)}><X/></button>
           </div>
           <div className="cart-items">
             {cart.length === 0
-              ? <div className="empty-cart"><ShoppingBag/><p>{lang === 'zh' ? '购物车目前为空' : 'Your shopping bag is empty'}</p><button onClick={() => setCartOpen(false)}>{lang === 'zh' ? '继续浏览' : 'Continue browsing'}</button></div>
+              ? <div className="empty-cart"><ShoppingBag/><p>{m.empty}</p><button onClick={() => setCartOpen(false)}>{m.continue}</button></div>
               : cart.map(item => {
-                const content = item.customManaged ? { collection:lang === 'zh' ? item.brandZh : item.brandEn || 'OiWatch', name:lang === 'zh' ? item.nameZh : item.translations?.[lang]?.name || item.nameEn || item.translations?.en?.name || 'Selected timepiece', subtitle:money(item.price) } : item.customMeta ? {
+                const content = item.customManaged ? { collection:cleanLocalizedText(lang === 'zh' ? item.brandZh : item.brandEn, lang) || 'OiWatch', name:localizedProductValue(item, lang, 'name'), subtitle:money(item.price) } : item.customMeta ? {
                   collection: lang === 'zh' ? item.customMeta.brand.zh : item.customMeta.brand.en,
                   name: (lang === 'zh' ? item.customMeta.brand.zhLines : item.customMeta.brand.enLines)[item.customMeta.lineIndex],
-                  subtitle: lang === 'zh' ? (item.customMeta.rare ? '珍罕配置' : '经典精选') : (item.customMeta.rare ? 'Rare configuration' : 'Signature selection'),
+                  subtitle: item.customMeta.rare ? selectionTierCopy[lang].rare : selectionTierCopy[lang].signature,
                 } : getWatchContent(item.id, lang);
                 return <article className="cart-item" key={item.id}>
                   <img src={item.image} alt={content.name}/>
@@ -1565,49 +1740,53 @@ function App() {
                       <button onClick={() => changeQuantity(item.id, 1)}><Plus size={13}/></button>
                     </div>
                   </div>
-                  <button className="remove-item" onClick={() => setCart(items => items.filter(entry => entry.id !== item.id))} aria-label={lang === 'zh' ? '删除' : 'Remove'}><Trash2 size={16}/></button>
+                  <button className="remove-item" onClick={() => setCart(items => items.filter(entry => entry.id !== item.id))} aria-label={m.remove}><Trash2 size={16}/></button>
                 </article>;
               })}
           </div>
           {cart.length > 0 && <div className="cart-footer">
-            <p><span>{lang === 'zh' ? '所选数量' : 'Selected pieces'}</span><strong>{cartCount}</strong></p>
-            <p className="cart-total"><span>{lang === 'zh' ? '合计' : 'Total'}</span><strong>{money(cartTotal)}</strong></p>
-            <button className="primary" onClick={() => { setCartOpen(false); setCheckoutOpen(true); }}>{lang === 'zh' ? '提交订单咨询' : 'Submit order request'}<ArrowRight size={17}/></button>
-            <small>{lang === 'zh' ? '商品统一以美元计价，已包含安全配送服务。' : 'Products are priced in USD and include secure delivery.'}</small>
+            <p><span>{m.selected}</span><strong>{cartCount}</strong></p>
+            <p className="cart-total"><span>{m.total}</span><strong>{money(cartTotal)}</strong></p>
+            <button className="primary" onClick={() => { setCartOpen(false); setCheckoutOpen(true); }}>{m.checkoutNow}<ArrowRight size={17}/></button>
+            <small>{m.cartPricing}</small>
           </div>}
         </aside>
       </div>}
 
       {checkoutOpen && <div className="checkout-page">
-        <header className="checkout-header"><SiteLogo/><button onClick={() => setCheckoutOpen(false)}><X size={18}/>{lang === 'zh' ? '返回购物车' : 'Return to bag'}</button></header>
-        {orderPlaced && paymentInvoice && <div className={`order-success crypto-payment ${paymentChannel === 'gateway' ? 'paygate-checkout' : 'direct-wallet-checkout'}`}>
-          <ShieldCheck/><p>{paymentMethod === 'cod' ? 'COD SHIPPING PAYMENT' : 'CRYPTO PAYMENT'}</p><h2>{paymentMethod === 'cod' ? 'Pay $40 shipping to confirm COD' : 'Scan to complete payment'}</h2>
-          {paymentChannel === 'gateway' ? <span>STEP 4 / PAYGATE SECURE CHECKOUT. Order {paymentInvoice.orderId}. Scan the PayGate code and pay the exact {paymentInvoice.asset} amount shown below.</span> : <span>{paymentMethod === 'cod' ? `Order ${paymentInvoice.orderId}. This payment covers shipping only; the remaining balance is due on delivery.` : `Order ${paymentInvoice.orderId}. Pay using ${paymentInvoice.asset} only.`}</span>}
-          {paymentInvoice.qrCode ? <><img className="payment-qr" src={paymentInvoice.qrCode} alt="Payment QR code"/><a className="payment-copy" href={paymentInvoice.qrCode} download={`oiwatch-${paymentInvoice.orderId}-${paymentInvoice.asset}-qr.png`}>Save QR code</a></> : <div className="payment-qr-placeholder">QR code unavailable</div>}
+        <header className="checkout-header"><SiteLogo/><button onClick={() => setCheckoutOpen(false)}><X size={18}/>{checkoutCopy.backToBag}</button></header>
+        {orderPlaced && paymentInvoice && <div className="order-success crypto-payment direct-wallet-checkout">
+          <ShieldCheck/><p>{paymentMethod === 'cod' ? checkoutCopy.result.codEyebrow : checkoutCopy.result.walletEyebrow}</p><h2>{paymentMethod === 'cod' ? checkoutCopy.result.codTitle : checkoutCopy.result.walletTitle}</h2>
+          <span>{formatCopy(paymentMethod === 'cod' ? checkoutCopy.result.codSummary : checkoutCopy.result.walletSummary, { orderId:paymentInvoice.orderId, asset:paymentInvoice.asset, network:cryptoChoices.find(([asset]) => asset === paymentInvoice.asset)?.[1] || settlementNetwork })}</span>
+          {paymentInvoice.qrCode ? <><img className="payment-qr" src={paymentInvoice.qrCode} alt={checkoutCopy.result.qrAlt}/><a className="payment-copy" href={paymentInvoice.qrCode} download={`oiwatch-${paymentInvoice.orderId}-${paymentInvoice.asset}-qr.png`}>{checkoutCopy.result.saveQr}</a></> : <div className="payment-qr-placeholder">{checkoutCopy.result.qrUnavailable}</div>}
           <strong className="payment-due">{paymentInvoice.amountCoin ? `${paymentInvoice.amountCoin} ${paymentInvoice.asset}` : paymentInvoice.asset}</strong>
-          {paymentChannel === 'direct' && <><code className="payment-address">{paymentInvoice.address}</code><button type="button" className="payment-copy" onClick={() => navigator.clipboard?.writeText(paymentInvoice.address)}>Copy address</button></>}
-          <small>{paymentChannel === 'gateway' ? 'This is an order-specific PayGate payment QR code. Your personal wallet address is not displayed in this checkout.' : 'Use only the selected asset and network. Payment stays pending until verified on-chain.'}</small>
+          {paymentChannel === 'direct' && <><code className="payment-address">{paymentInvoice.address}</code><button type="button" className="payment-copy" onClick={() => navigator.clipboard?.writeText(paymentInvoice.address)}>{checkoutCopy.result.copyAddress}</button></>}
+          <small>{formatCopy(checkoutCopy.network.warning, { asset:paymentInvoice.asset, network:cryptoChoices.find(([asset]) => asset === paymentInvoice.asset)?.[1] || settlementNetwork })}</small>
           <form className="payment-proof" onSubmit={submitPaymentProof}>
-            <label>Transaction hash<input name="txid" placeholder="Paste transaction hash" autoComplete="off"/></label>
-            <label>Payment screenshot<input name="screenshot" type="file" accept="image/png,image/jpeg,image/webp"/></label>
-            <button type="submit" className="payment-copy">Submit payment proof</button>
+            <label>{checkoutCopy.proof.hashLabel}<input name="txid" placeholder={checkoutCopy.proof.hashPlaceholder} autoComplete="off"/></label>
+            <label>{checkoutCopy.proof.screenshotLabel}<input name="screenshot" type="file" accept="image/png,image/jpeg,image/webp"/><small>{checkoutCopy.proof.screenshotHint}</small></label>
+            <button type="submit" className="payment-copy">{checkoutCopy.proof.submit}</button>
           </form>
-          {paymentProofStatus && <p className="payment-proof-status">{paymentProofStatus}</p>}
-          {paymentExplorerUrl && <a className="payment-copy" href={paymentExplorerUrl} target="_blank" rel="noreferrer">View transaction on-chain</a>}
-          <button className="primary" onClick={() => { setOrderPlaced(false); setPaymentInvoice(null); setCheckoutOpen(false); setCart([]); }}>Done</button>
-        </div>}        {orderPlaced && !paymentInvoice ? <div className="order-success"><ShieldCheck/><p>{lang === 'zh' ? '订单已提交' : 'ORDER SUBMITTED'}</p><h2>{lang === 'zh' ? '感谢您的选购' : 'Thank you for your order'}</h2><span>{lang === 'zh' ? '专属顾问将通过 WhatsApp 或电子邮件确认库存、配送和付款安排。网站不会收集银行卡资料。' : 'Your advisor will confirm availability, delivery and payment arrangements by WhatsApp or email. This website does not collect card details.'}</span><button className="primary" onClick={() => { setOrderPlaced(false); setCheckoutOpen(false); setCart([]); }}>{lang === 'zh' ? '返回首页' : 'Return home'}</button></div>
+          {paymentProofStatus && <p className="payment-proof-status">{checkoutCopy.proof.statuses[paymentProofStatus] || checkoutCopy.proof.statuses.failed}</p>}
+          {paymentExplorerUrl && <a className="payment-copy" href={paymentExplorerUrl} target="_blank" rel="noreferrer">{checkoutCopy.proof.viewOnChain}</a>}
+          <button className="primary" onClick={() => { setOrderPlaced(false); setPaymentInvoice(null); setCheckoutOpen(false); setCart([]); }}>{checkoutCopy.result.complete}</button>
+        </div>}        {orderPlaced && !paymentInvoice ? <div className="order-success"><ShieldCheck/><p>{checkoutCopy.result.submittedEyebrow}</p><h2>{checkoutCopy.result.submittedTitle}</h2><span>{checkoutCopy.result.submittedBody}</span><button className="primary" onClick={() => { setOrderPlaced(false); setCheckoutOpen(false); setCart([]); }}>{checkoutCopy.result.returnHome}</button></div>
         : <div className="checkout-layout">
-          {checkoutStep === 1 ? <form className="payment-form delivery-form" noValidate onSubmit={confirmDeliveryDetails}>
-            <p>{lang === 'zh' ? '第 1 步 / 配送地址' : 'STEP 1 / DELIVERY ADDRESS'}</p><h1>{lang === 'zh' ? '先确认配送地址' : 'Confirm your delivery address'}</h1>
-            <fieldset><legend>{lang === 'zh' ? '联系资料' : 'Contact details'}</legend><div className="form-row"><input name="customerName" required placeholder={lang === 'zh' ? '姓名' : 'Full name'}/><input name="email" required type="email" placeholder={lang === 'zh' ? '电子邮箱' : 'Email address'}/></div><input name="phone" required placeholder={lang === 'zh' ? '联系电话' : 'Phone number'}/></fieldset>
-            <fieldset><legend>{lang === 'zh' ? '配送地址' : 'Delivery address'}</legend><select className="checkout-country" name="country" required defaultValue=""><option value="" disabled>{lang === 'zh' ? '选择国家或地区' : 'Select country or region'}</option>{countryOptions.map(item => <option key={item.code} value={item.name}>{item.name}</option>)}</select><textarea name="streetAddress" required rows="6" placeholder={lang === 'zh' ? '详细地址：街道、门牌号、公寓/楼层等' : 'Full address: street, building number, apartment or floor'}/><input name="postalCode" required placeholder={lang === 'zh' ? '邮政编码' : 'Postal code'}/></fieldset>
-            {orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit"><ArrowRight size={17}/>{lang === 'zh' ? '确认地址，下一步' : 'Confirm address & continue'}</button>
-          </form> : <form className="payment-form" onSubmit={submitOrder}>
-            <p>{lang === 'zh' ? '第 2 步 / 付款方式' : 'STEP 2 / PAYMENT METHOD'}</p><h1>{lang === 'zh' ? '选择付款方式' : 'Choose payment method'}</h1>
-            <fieldset><legend>{lang === 'zh' ? '付款方式' : 'Payment method'}</legend><div className="payment-method-options"><label><input type="radio" checked={paymentMethod === 'crypto'} onChange={() => setPaymentMethod('crypto')}/><span><strong>{lang === 'zh' ? '加密货币' : 'Cryptocurrency'}</strong><small>{lang === 'zh' ? '按链上金额付款' : 'Pay the order amount on-chain'}</small></span></label><label><input type="radio" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')}/><span><strong>{lang === 'zh' ? '货到付款' : 'Cash on delivery'}</strong><small>{lang === 'zh' ? '总额加 10%，先付 $40 运费' : '10% service fee; $40 shipping paid first'}</small></span></label></div></fieldset>{paymentMethod === 'crypto' ? <fieldset><legend>{lang === 'zh' ? '加密货币' : 'Cryptocurrency'}</legend><div className="crypto-options">{[['USDT','TRC20'],['USDC','ERC20'],['BTC','Bitcoin'],['ETH','Ethereum'],['SOL','Solana']].map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div></fieldset> : <div className="cod-summary"><strong>{lang === 'zh' ? '货到付款结算' : 'Cash-on-delivery breakdown'}</strong><span>{lang === 'zh' ? `订单总额（含 10% 服务费）：${money(cartTotal * 1.1)}` : `Order total with 10% service fee: ${money(cartTotal * 1.1)}`}</span><span>{lang === 'zh' ? '现在需支付运费：$40' : 'Shipping due now: $40'}</span><span>{lang === 'zh' ? `签收时支付余额：${money(Math.max(0, cartTotal * 1.1 - 40))}` : `Balance due on delivery: ${money(Math.max(0, cartTotal * 1.1 - 40))}`}</span></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit" disabled={orderSubmitting}><ShieldCheck size={17}/>{orderSubmitting ? (lang === 'zh' ? '正在创建付款…' : 'Creating payment…') : paymentMethod === 'cod' ? (lang === 'zh' ? '支付 $40 运费并确认货到付款' : 'Pay $40 shipping & confirm COD') : (lang === 'zh' ? `确认并创建付款 ${money(cartTotal)}` : `Confirm & create payment ${money(cartTotal)}`)}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(1)}>{lang === 'zh' ? '返回修改地址' : 'Back to address'}</button>
+          {checkoutStep === 1 && <form className="payment-form delivery-form" noValidate onSubmit={confirmDeliveryDetails}>
+            <p>{checkoutCopy.steps.address.eyebrow}</p><h1>{checkoutCopy.steps.address.title}</h1>
+            <fieldset><legend>{checkoutCopy.address.contactLegend}</legend><div className="form-row"><input name="customerName" required defaultValue={checkoutDetails?.customerName || ''} placeholder={checkoutCopy.address.fullName}/><input name="email" required type="email" defaultValue={checkoutDetails?.email || ''} placeholder={checkoutCopy.address.email}/></div><input name="phone" required defaultValue={checkoutDetails?.phone || ''} placeholder={checkoutCopy.address.phone}/></fieldset>
+            <fieldset><legend>{checkoutCopy.address.deliveryLegend}</legend><select className="checkout-country" name="country" required defaultValue={checkoutDetails?.country || ''}><option value="" disabled>{checkoutCopy.address.country}</option>{countryOptions.map(item => <option key={item.code} value={item.name}>{item.name}</option>)}</select><textarea name="streetAddress" required rows="6" defaultValue={checkoutDetails?.streetAddress || ''} placeholder={checkoutCopy.address.streetAddress}/><input name="postalCode" required defaultValue={checkoutDetails?.postalCode || ''} placeholder={checkoutCopy.address.postalCode}/></fieldset>
+            <small>{checkoutCopy.address.savedNotice}</small>
+            {orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit"><ArrowRight size={17}/>{checkoutCopy.address.confirm}</button>
           </form>}
-          {checkoutStep === 3 && <section className="payment-channel-step"><p>STEP 3 / PAYMENT CHANNEL</p><h2>{lang === 'zh' ? '选择付款通道' : 'Choose payment channel'}</h2><div className="payment-method-options"><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'gateway'} onChange={() => setPaymentChannel('gateway')}/><span><strong>{lang === 'zh' ? '集成支付' : 'Integrated payment'}</strong><small>{lang === 'zh' ? '通过 PayGate 生成本订单专属付款地址' : 'PayGate generates a unique address for this order'}</small></span></label><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'direct'} onChange={() => setPaymentChannel('direct')}/><span><strong>{lang === 'zh' ? '直接扫码付款到我的钱包' : 'Scan to pay my wallet directly'}</strong><small>{lang === 'zh' ? '直接显示配置的钱包地址与二维码' : 'Shows the configured wallet address and QR code directly'}</small></span></label></div><button className="primary" type="button" disabled={orderSubmitting} onClick={submitOrder}><ShieldCheck size={17}/>{orderSubmitting ? 'Creating payment...' : paymentChannel === 'gateway' ? 'Continue with integrated payment' : 'Show wallet QR code'}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(2)}>Back to payment method</button></section>}
-          <aside className="order-summary"><h2>{lang === 'zh' ? '订单摘要' : 'Order summary'}</h2>{cart.map(item => { const content = item.customManaged ? { name:lang==='zh'?item.nameZh:item.translations?.[lang]?.name||item.nameEn||item.translations?.en?.name||'Selected timepiece', collection:lang==='zh'?item.brandZh:item.brandEn||'OiWatch' } : item.customMeta ? { name:(lang==='zh'?item.customMeta.brand.zhLines:item.customMeta.brand.enLines)[item.customMeta.lineIndex], collection:lang==='zh'?item.customMeta.brand.zh:item.customMeta.brand.en } : getWatchContent(item.id,lang); return <article key={item.id}><img src={item.image} alt={content.name}/><div><span>{content.collection}</span><h3>{content.name}</h3><p>{lang==='zh'?'数量':'Quantity'}：{item.quantity}</p></div><strong>{money(itemPrice(item)*item.quantity)}</strong></article>})}<div className="summary-total"><span>{lang==='zh'?'订单合计':'Order total'}</span><strong>{money(cartTotal)}</strong></div></aside>
+          {checkoutStep === 2 && <form className="payment-form" onSubmit={confirmPaymentMethod}>
+            <p>{checkoutCopy.steps.method.eyebrow}</p><h1>{checkoutCopy.steps.method.title}</h1>
+            <fieldset><legend>{checkoutCopy.methods.legend}</legend><div className="payment-method-options"><label><input type="radio" checked={paymentMethod === 'crypto'} onChange={() => setPaymentMethod('crypto')}/><span><strong>{checkoutCopy.methods.crypto.title}</strong><small>{checkoutCopy.methods.crypto.description}</small></span></label><label><input type="radio" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')}/><span><strong>{checkoutCopy.methods.cod.title}</strong><small>{checkoutCopy.methods.cod.description}</small></span></label></div></fieldset>
+            <fieldset><legend>{paymentMethod === 'cod' ? checkoutCopy.methods.codAssetLegend : checkoutCopy.methods.assetLegend}</legend><div className="crypto-options">{cryptoChoices.map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div><small className="network-warning"><ShieldCheck size={14}/>{formatCopy(checkoutCopy.network.warning, { asset:paymentAsset, network:selectedNetwork })}</small></fieldset>
+            {paymentMethod === 'cod' && <div className="cod-summary"><strong>{checkoutCopy.cod.title}</strong><span>{formatCopy(checkoutCopy.cod.totalWithFee, { amount:money(cartTotal * 1.1) })}</span><span>{checkoutCopy.cod.shippingDueNow}</span><span>{formatCopy(checkoutCopy.cod.balanceOnDelivery, { amount:money(Math.max(0, cartTotal * 1.1 - 40)) })}</span><small>{checkoutCopy.cod.shippingPurpose}</small><small>{checkoutCopy.cod.eligibility}</small></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit"><ArrowRight size={17}/>{checkoutCopy.methods.continue}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(1)}>{checkoutCopy.methods.back}</button>
+          </form>}
+          {checkoutStep === 3 && <section className="payment-channel-step"><p>{checkoutCopy.steps.channel.eyebrow}</p><h2>{checkoutCopy.steps.channel.title}</h2><div className="payment-method-options"><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'gateway'} onChange={() => setPaymentChannel('gateway')}/><span><strong>{checkoutCopy.channels.hosted.title}</strong><small>{checkoutCopy.channels.hosted.description}</small></span></label><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'direct'} onChange={() => setPaymentChannel('direct')}/><span><strong>{checkoutCopy.channels.wallet.title}</strong><small>{checkoutCopy.channels.wallet.description}</small></span></label></div>{paymentChannel === 'gateway' && <><div className="checkout-payment-logos" aria-label={checkoutCopy.channels.hosted.availability}><span className="visa-mark">VISA</span><span className="mastercard-mark">Mastercard</span><span className="applepay-mark">Apple Pay</span><span className="googlepay-mark">G Pay</span><span className="wallet-mark">USDC</span></div><small className="hosted-availability">{checkoutCopy.channels.hosted.availability}</small></>}{paymentChannel === 'direct' && <label className="direct-asset-select">{checkoutCopy.channels.wallet.assetLabel}<select value={paymentAsset} onChange={event => setPaymentAsset(event.target.value)}>{cryptoChoices.map(([asset, network]) => <option key={asset} value={asset}>{asset} · {network}</option>)}</select></label>}<small className="network-warning"><ShieldCheck size={14}/>{formatCopy(checkoutCopy.network.selected, { asset:settlementAsset, network:settlementNetwork })}</small>{hostedPopupBlocked && hostedPaymentUrl && <div className="popup-fallback"><strong>{checkoutCopy.channels.popupBlocked.title}</strong><span>{checkoutCopy.channels.popupBlocked.body}</span><a href={hostedPaymentUrl} target="_blank" rel="noreferrer">{checkoutCopy.channels.popupBlocked.action}<ExternalLink size={15}/></a><small>{checkoutCopy.channels.popupBlocked.note}</small></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="button" disabled={orderSubmitting} onClick={submitOrder}>{paymentChannel === 'gateway' ? <ExternalLink size={17}/> : <ShieldCheck size={17}/>} {orderSubmitting ? (paymentChannel === 'gateway' ? checkoutCopy.channels.hosted.opening : checkoutCopy.channels.wallet.opening) : paymentChannel === 'gateway' ? checkoutCopy.channels.hosted.action : checkoutCopy.channels.wallet.action}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(2)}>{checkoutCopy.channels.back}</button></section>}
+          <aside className="order-summary"><h2>{checkoutCopy.summary.title}</h2>{cart.map(item => { const content = item.customManaged ? { name:localizedProductValue(item, lang, 'name'), collection:cleanLocalizedText(lang === 'zh' ? item.brandZh : item.brandEn, lang) || 'OiWatch' } : item.customMeta ? { name:(lang==='zh'?item.customMeta.brand.zhLines:item.customMeta.brand.enLines)[item.customMeta.lineIndex], collection:lang==='zh'?item.customMeta.brand.zh:item.customMeta.brand.en } : getWatchContent(item.id,lang); return <article key={item.id}><img src={item.image} alt={content.name}/><div><span>{content.collection}</span><h3>{content.name}</h3><p>{checkoutCopy.summary.quantity}：{item.quantity}</p></div><strong>{money(itemPrice(item)*item.quantity)}</strong></article>})}<div className="summary-total"><span>{checkoutCopy.summary.total}</span><strong>{money(cartTotal)}</strong></div></aside>
         </div>}
       </div>}
     </>
