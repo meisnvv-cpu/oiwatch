@@ -1469,9 +1469,13 @@ function App() {
   const selectedNetwork = cryptoChoices.find(([asset]) => asset === paymentAsset)?.[1] || '';
   const settlementAsset = paymentChannel === 'gateway' ? 'USDC' : paymentAsset;
   const settlementNetwork = paymentChannel === 'gateway' ? 'Polygon' : selectedNetwork;
-  const submitOrder = async event => {
+  const submitOrder = async (event, overrides = {}) => {
     event?.preventDefault?.();
-    if (checkoutStep === 2) {
+    const activeChannel = overrides.channel || paymentChannel;
+    const activeMethod = overrides.method || paymentMethod;
+    const activeAsset = activeChannel === 'gateway' ? 'USDC' : paymentAsset;
+    const activeNetwork = activeChannel === 'gateway' ? 'Polygon' : selectedNetwork;
+    if (checkoutStep === 2 && !overrides.skipStep) {
       setCheckoutStep(3);
       setOrderError('');
       return;
@@ -1484,7 +1488,7 @@ function App() {
     }
     setHostedPaymentUrl('');
     setHostedPopupBlocked(false);
-    const hostedWindow = paymentChannel === 'gateway' ? window.open('', '_blank') : null;
+    const hostedWindow = activeChannel === 'gateway' ? window.open('', '_blank') : null;
     if (hostedWindow) {
       hostedWindow.opener = null;
       hostedWindow.document.title = checkoutCopy.channels.hosted.title;
@@ -1499,11 +1503,11 @@ function App() {
           unitPrice:itemPrice(item),
           name:item.nameEn || item.nameZh || item.id,
         }));
-      const orderTotal = paymentMethod === 'cod' ? Math.round(cartTotal * 1.1 * 100) / 100 : cartTotal;
+      const orderTotal = activeMethod === 'cod' ? Math.round(cartTotal * 1.1 * 100) / 100 : cartTotal;
       const paymentResponse = await fetch('/.netlify/functions/create-crypto-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: orderNumber, amountUsd: paymentMethod === 'cod' ? 40 : cartTotal, orderTotal, asset:settlementAsset, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod, paymentChannel }),
+        body: JSON.stringify({ orderId: orderNumber, amountUsd: activeMethod === 'cod' ? 40 : cartTotal, orderTotal, asset:activeAsset, network:activeNetwork, customer:{ name:checkoutDetails.customerName, email:checkoutDetails.email, phone:checkoutDetails.phone, address:checkoutDetails.streetAddress, postalCode:checkoutDetails.postalCode, country:checkoutDetails.country }, items, paymentMethod:activeMethod, paymentChannel:activeChannel }),
       });
       const payment = await paymentResponse.json().catch(() => null);
       if (!paymentResponse.ok) throw new Error(payment?.error || `Payment request failed (${paymentResponse.status})`);
@@ -1537,6 +1541,13 @@ function App() {
     if (paymentMethod === 'cod' && paymentChannel === 'gateway') setPaymentAsset('USDC');
     setCheckoutStep(3);
     setOrderError('');
+  };
+  const beginIntegratedPayment = () => {
+    if (orderSubmitting) return;
+    setPaymentMethod('crypto');
+    setPaymentChannel('gateway');
+    setPaymentAsset('USDC');
+    submitOrder(null, { channel:'gateway', method:'crypto', skipStep:true });
   };
   const submitPaymentProof = async event => {
     event.preventDefault();
@@ -1659,13 +1670,8 @@ function App() {
       </header>
 
       <main>
-        <section className="cinematic-hero" id="home">
-          <div className="hero-watch-layer" aria-hidden="true">
-            <FadingHeroVideo/>
-          </div>
-        </section>
-
-        <section className="collection section immersive-collection" id="collection">
+        <section className="collection section immersive-collection" id="home">
+          <div className="collection-film-layer" aria-hidden="true"><FadingHeroVideo className="collection-film-video"/></div>
           <div className="section-heading">
             <div><p className="kicker">{t.featured}</p><h2>{t.sectionTitle}</h2></div>
             <p>{t.sectionText}</p>
@@ -1908,9 +1914,8 @@ function App() {
           </form>}
           {checkoutStep === 2 && <form className="payment-form" onSubmit={confirmPaymentMethod}>
             <p>{checkoutCopy.steps.method.eyebrow}</p><h1>{checkoutCopy.steps.method.title}</h1>
-            <fieldset><legend>{checkoutCopy.methods.legend}</legend><div className="payment-method-options"><label><input type="radio" checked={paymentMethod === 'crypto'} onChange={() => setPaymentMethod('crypto')}/><span><strong>{checkoutCopy.methods.crypto.title}</strong><small>{checkoutCopy.methods.crypto.description}</small></span></label><label><input type="radio" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')}/><span><strong>{checkoutCopy.methods.cod.title}</strong><small>{checkoutCopy.methods.cod.description}</small></span></label></div></fieldset>
-            <fieldset><legend>{paymentMethod === 'cod' ? checkoutCopy.methods.codAssetLegend : checkoutCopy.methods.assetLegend}</legend><div className="crypto-options">{cryptoChoices.map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div><small className="network-warning"><ShieldCheck size={14}/>{formatCopy(checkoutCopy.network.warning, { asset:paymentAsset, network:selectedNetwork })}</small></fieldset>
-            {paymentMethod === 'cod' && <div className="cod-summary"><strong>{checkoutCopy.cod.title}</strong><span>{formatCopy(checkoutCopy.cod.totalWithFee, { amount:money(cartTotal * 1.1) })}</span><span>{checkoutCopy.cod.shippingDueNow}</span><span>{formatCopy(checkoutCopy.cod.balanceOnDelivery, { amount:money(Math.max(0, cartTotal * 1.1 - 40)) })}</span><small>{checkoutCopy.cod.shippingPurpose}</small><small>{checkoutCopy.cod.eligibility}</small></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="submit"><ArrowRight size={17}/>{checkoutCopy.methods.continue}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(1)}>{checkoutCopy.methods.back}</button>
+            <fieldset><legend>{checkoutCopy.methods.legend}</legend><div className="payment-method-options"><label><input type="radio" checked={paymentChannel === 'gateway'} onChange={beginIntegratedPayment}/><span><strong>{checkoutCopy.channels.hosted.title}</strong><small>{checkoutCopy.channels.hosted.description}</small></span></label><label><input type="radio" checked={paymentChannel === 'direct'} onChange={() => { setPaymentMethod('crypto'); setPaymentChannel('direct'); }}/><span><strong>{checkoutCopy.channels.wallet.title}</strong><small>{checkoutCopy.channels.wallet.description}</small></span></label></div></fieldset>
+            {paymentChannel === 'direct' && <><fieldset><legend>{checkoutCopy.methods.assetLegend}</legend><div className="crypto-options">{cryptoChoices.map(([asset, network]) => <label key={asset}><input type="radio" name="paymentAsset" value={asset} checked={paymentAsset === asset} onChange={() => setPaymentAsset(asset)}/><span><strong>{asset}</strong><small>{network}</small></span></label>)}</div><small className="network-warning"><ShieldCheck size={14}/>{formatCopy(checkoutCopy.network.warning, { asset:paymentAsset, network:selectedNetwork })}</small></fieldset><button className="primary" type="submit"><ArrowRight size={17}/>{checkoutCopy.methods.continue}</button></>}{orderError && <p className="admin-save-error">{orderError}</p>}<button type="button" className="checkout-back" onClick={() => setCheckoutStep(1)}>{checkoutCopy.methods.back}</button>
           </form>}
           {checkoutStep === 3 && <section className="payment-channel-step"><p>{checkoutCopy.steps.channel.eyebrow}</p><h2>{checkoutCopy.steps.channel.title}</h2><div className="payment-method-options"><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'gateway'} onChange={() => setPaymentChannel('gateway')}/><span><strong>{checkoutCopy.channels.hosted.title}</strong><small>{checkoutCopy.channels.hosted.description}</small></span></label><label><input type="radio" name="paymentChannel" checked={paymentChannel === 'direct'} onChange={() => setPaymentChannel('direct')}/><span><strong>{checkoutCopy.channels.wallet.title}</strong><small>{checkoutCopy.channels.wallet.description}</small></span></label></div>{paymentChannel === 'gateway' && <><div className="checkout-payment-logos" aria-label={checkoutCopy.channels.hosted.availability}><span className="visa-mark">VISA</span><span className="mastercard-mark">Mastercard</span><span className="applepay-mark">Apple Pay</span><span className="googlepay-mark">G Pay</span><span className="wallet-mark">USDC</span></div><small className="hosted-availability">{checkoutCopy.channels.hosted.availability}</small></>}{paymentChannel === 'direct' && <label className="direct-asset-select">{checkoutCopy.channels.wallet.assetLabel}<select value={paymentAsset} onChange={event => setPaymentAsset(event.target.value)}>{cryptoChoices.map(([asset, network]) => <option key={asset} value={asset}>{asset} · {network}</option>)}</select></label>}<small className="network-warning"><ShieldCheck size={14}/>{formatCopy(checkoutCopy.network.selected, { asset:settlementAsset, network:settlementNetwork })}</small>{hostedPopupBlocked && hostedPaymentUrl && <div className="popup-fallback"><strong>{checkoutCopy.channels.popupBlocked.title}</strong><span>{checkoutCopy.channels.popupBlocked.body}</span><a href={hostedPaymentUrl} target="_blank" rel="noreferrer">{checkoutCopy.channels.popupBlocked.action}<ExternalLink size={15}/></a><small>{checkoutCopy.channels.popupBlocked.note}</small></div>}{orderError && <p className="admin-save-error">{orderError}</p>}<button className="primary" type="button" disabled={orderSubmitting} onClick={submitOrder}>{paymentChannel === 'gateway' ? <ExternalLink size={17}/> : <ShieldCheck size={17}/>} {orderSubmitting ? (paymentChannel === 'gateway' ? checkoutCopy.channels.hosted.opening : checkoutCopy.channels.wallet.opening) : paymentChannel === 'gateway' ? checkoutCopy.channels.hosted.action : checkoutCopy.channels.wallet.action}</button><button type="button" className="checkout-back" onClick={() => setCheckoutStep(2)}>{checkoutCopy.channels.back}</button></section>}
           <aside className="order-summary"><h2>{checkoutCopy.summary.title}</h2>{cart.map(item => { const content = item.customManaged ? { name:localizedProductValue(item, lang, 'name'), collection:cleanLocalizedText(lang === 'zh' ? item.brandZh : item.brandEn, lang) || 'OiWatch' } : item.customMeta ? { name:(lang==='zh'?item.customMeta.brand.zhLines:item.customMeta.brand.enLines)[item.customMeta.lineIndex], collection:lang==='zh'?item.customMeta.brand.zh:item.customMeta.brand.en } : getWatchContent(item.id,lang); return <article key={item.id}><img src={item.image} alt={content.name}/><div><span>{content.collection}</span><h3>{content.name}</h3><p>{checkoutCopy.summary.quantity}：{item.quantity}</p></div><strong>{money(itemPrice(item)*item.quantity)}</strong></article>})}<div className="summary-total"><span>{checkoutCopy.summary.total}</span><strong>{money(cartTotal)}</strong></div></aside>
