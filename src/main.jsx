@@ -196,8 +196,9 @@ function SiteLogo({ className = '', ...props }) {
 }
 
 const HERO_BACKGROUND_VIDEO = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_080021_d598092b-c4c2-4e53-8e46-94cf9064cd50.mp4';
+const COLLECTION_BACKGROUND_VIDEO = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_094631_d30ab262-45ee-4b7d-99f3-5d5848c8ef13.mp4';
 
-function FadingHeroVideo() {
+function FadingHeroVideo({ src = HERO_BACKGROUND_VIDEO, className = 'hero-reference-video' }) {
   const videoRef = useRef(null);
   const frameRef = useRef(0);
   const fadingOutRef = useRef(false);
@@ -248,7 +249,7 @@ function FadingHeroVideo() {
     };
   }, []);
 
-  return <video ref={videoRef} className="hero-reference-video" src={HERO_BACKGROUND_VIDEO} muted playsInline preload="auto" aria-hidden="true" tabIndex="-1" />;
+  return <video ref={videoRef} className={className} src={src} muted playsInline preload="auto" aria-hidden="true" tabIndex="-1" />;
 }
 
 const modelTagPattern = /\b(RM\s?\d{2,3}(?:[- ]\d{1,3})?|PAM\s?\d{3,4}|IW\s?\d{5,8}|BR\s?\d{2}(?:[- ]?[A-Z0-9]+)?|[A-Z]{0,3}\d{4,6}[A-Z]{0,3})\b/i;
@@ -736,7 +737,7 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
           <select value={batchTargetStatus} disabled={!selectedProductIds.length || batchSaving} onChange={event=>setBatchTargetStatus(event.target.value)}><option value="draft">设为草稿</option><option value="published">发布</option></select>
           <label className="batch-source-toggle"><input type="checkbox" checked={batchApplySource} disabled={!selectedProductIds.length || batchSaving} onChange={event=>setBatchApplySource(event.target.checked)}/>更新来源核验</label>
           {batchApplySource && <><label className="batch-source-toggle"><input type="checkbox" checked={batchSourceVerified} disabled={batchSaving} onChange={event=>setBatchSourceVerified(event.target.checked)}/>来源已核验</label><input className="batch-source-note" value={batchSourceEvidenceNote} disabled={batchSaving} onChange={event=>setBatchSourceEvidenceNote(event.target.value)} placeholder="供货依据摘要（应用到所选商品）"/></>}
-          <button type="button" disabled={!selectedProductIds.length || batchSaving} onClick={applyBulkChanges}>{batchSaving ? '正在更新…' : '应用修改'}</button>
+          <button type="button" className="bulk-save-button" disabled={!selectedProductIds.length || batchSaving} onClick={applyBulkChanges}>{batchSaving ? '正在保存所选商品…' : `保存所选商品${selectedProductIds.length ? ` (${selectedProductIds.length})` : ''}`}</button>
           {batchStatus && <small>{batchStatus}</small>}
         </div>
         <div className="product-table">
@@ -1213,13 +1214,11 @@ function ShopProductPage({ product, products, lang, money, cartCount, cartPulse,
           <div><span>{labels.condition}</span><strong>{labels.conditionValue}</strong></div>
           <div><span>{labels.delivery}</span><strong>{labels.deliveryValue}</strong></div>
           <div><span>{labels.stock}</span><strong>{product.stock > 0 ? labels.inStock : labels.enquire}</strong></div>
-          <div><span>{labels.source}</span><strong>{labels.sourceValue}</strong></div>
           <div><span>{labels.documents}</span><strong>{labels.documentsValue}</strong></div>
         </div>
         <div className="product-description">
           <h2>{labels.note}</h2>
           <ul>
-            <li><strong>{labels.source}</strong><span>{labels.sourceDetail}</span></li>
             {(descriptionItems.length ? descriptionItems : [{ label:labels.fallbackSection, detail:labels.fallbackDescription, order:0 }]).map(item => (
               <li key={`${item.label}-${item.order}`}><strong>{item.label}</strong><span>{item.detail}</span></li>
             ))}
@@ -1664,26 +1663,9 @@ function App() {
           <div className="hero-watch-layer" aria-hidden="true">
             <FadingHeroVideo/>
           </div>
-          <div className="hero-light-sweep" aria-hidden="true"/>
-          <div className="hero-dial" aria-hidden="true"><span/><span/><span/><span/></div>
-          <div className="cinematic-hero-content">
-            <p className="hero-kicker"><span>{t.featured}</span><b>01 / OIWATCH</b></p>
-            <h1>{t.hero}</h1>
-            <p className="cinematic-hero-copy">{t.intro}</p>
-            <div className="cinematic-hero-actions">
-              <button className="glass-primary" onClick={openShop}>{t.explore}<ArrowUpRight size={17}/></button>
-              <button className="glass-link" onClick={() => scrollTo('collection')}>{t.featured}<ArrowDown size={16}/></button>
-            </div>
-          </div>
-          <div className="hero-proof glass-panel">
-            <div><Clock3/><span><b>24H</b>{m.newItem}</span></div>
-            <div><ShieldCheck/><span><b>QC</b>{q.best}</span></div>
-            <div><Globe2/><span><b>WORLD</b>{m.shippingPartners}</span></div>
-          </div>
-          <button className="hero-scroll" onClick={() => scrollTo('collection')} aria-label={t.featured}><span/>{t.featured}</button>
         </section>
 
-        <section className="collection section immersive-collection" id="collection" onMouseMove={event => { const box = event.currentTarget.getBoundingClientRect(); event.currentTarget.style.setProperty('--pointer-x', `${((event.clientX - box.left) / box.width) * 100}%`); event.currentTarget.style.setProperty('--pointer-y', `${((event.clientY - box.top) / box.height) * 100}%`); }}>
+        <section className="collection section immersive-collection" id="collection">
           <div className="section-heading">
             <div><p className="kicker">{t.featured}</p><h2>{t.sectionTitle}</h2></div>
             <p>{t.sectionText}</p>
@@ -1704,6 +1686,7 @@ function App() {
         </section>
 
         <section className="brands-section" id="brands">
+          <div className="brand-reference-layer" aria-hidden="true"><FadingHeroVideo src={COLLECTION_BACKGROUND_VIDEO} className="brand-reference-video"/></div>
           <div className="brands-heading">
             <p className="kicker">{m.brands}</p>
             <h2>{m.byBrand}</h2>
