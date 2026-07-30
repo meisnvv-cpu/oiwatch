@@ -195,6 +195,62 @@ function SiteLogo({ className = '', ...props }) {
   </a>;
 }
 
+const HERO_BACKGROUND_VIDEO = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_080021_d598092b-c4c2-4e53-8e46-94cf9064cd50.mp4';
+
+function FadingHeroVideo() {
+  const videoRef = useRef(null);
+  const frameRef = useRef(0);
+  const fadingOutRef = useRef(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    const fadeTo = (target, duration = 500) => {
+      cancelAnimationFrame(frameRef.current);
+      const start = performance.now();
+      const initial = Number.parseFloat(video.style.opacity || '0');
+      const tick = now => {
+        const progress = Math.min((now - start) / duration, 1);
+        video.style.opacity = String(initial + (target - initial) * progress);
+        if (progress < 1) frameRef.current = requestAnimationFrame(tick);
+      };
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    const startPlayback = () => {
+      video.style.opacity = '0';
+      video.play().then(() => fadeTo(1)).catch(() => {});
+    };
+    const fadeBeforeEnd = () => {
+      if (!fadingOutRef.current && video.duration && video.duration - video.currentTime <= 0.55) {
+        fadingOutRef.current = true;
+        fadeTo(0);
+      }
+    };
+    const replay = () => {
+      video.style.opacity = '0';
+      window.setTimeout(() => {
+        video.currentTime = 0;
+        fadingOutRef.current = false;
+        video.play().then(() => fadeTo(1)).catch(() => {});
+      }, 100);
+    };
+
+    video.addEventListener('loadeddata', startPlayback);
+    video.addEventListener('timeupdate', fadeBeforeEnd);
+    video.addEventListener('ended', replay);
+    if (video.readyState >= 2) startPlayback();
+    return () => {
+      cancelAnimationFrame(frameRef.current);
+      video.removeEventListener('loadeddata', startPlayback);
+      video.removeEventListener('timeupdate', fadeBeforeEnd);
+      video.removeEventListener('ended', replay);
+    };
+  }, []);
+
+  return <video ref={videoRef} className="hero-reference-video" src={HERO_BACKGROUND_VIDEO} muted playsInline preload="auto" aria-hidden="true" tabIndex="-1" />;
+}
+
 const modelTagPattern = /\b(RM\s?\d{2,3}(?:[- ]\d{1,3})?|PAM\s?\d{3,4}|IW\s?\d{5,8}|BR\s?\d{2}(?:[- ]?[A-Z0-9]+)?|[A-Z]{0,3}\d{4,6}[A-Z]{0,3})\b/i;
 const CART_STORAGE_KEY = 'oiwatch-cart-v3';
 const CHECKOUT_STORAGE_KEY = 'oiwatch-checkout-details-v1';
@@ -1606,7 +1662,7 @@ function App() {
       <main>
         <section className="cinematic-hero" id="home">
           <div className="hero-watch-layer" aria-hidden="true">
-            <img src="/images/hero-watch-web.jpg" alt="" fetchPriority="high"/>
+            <FadingHeroVideo/>
           </div>
           <div className="hero-light-sweep" aria-hidden="true"/>
           <div className="hero-dial" aria-hidden="true"><span/><span/><span/><span/></div>
