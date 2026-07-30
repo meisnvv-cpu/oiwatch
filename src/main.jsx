@@ -486,6 +486,14 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
   const [translating, setTranslating] = useState(false);
   const [view, setView] = useState('products');
   const [search, setSearch] = useState('');
+  const [productPage, setProductPage] = useState(0);
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchStatus, setBatchStatus] = useState('');
+  const [batchTargetStatus, setBatchTargetStatus] = useState('draft');
+  const [batchApplySource, setBatchApplySource] = useState(false);
+  const [batchSourceVerified, setBatchSourceVerified] = useState(false);
+  const [batchSourceEvidenceNote, setBatchSourceEvidenceNote] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [saving, setSaving] = useState(false);
@@ -518,6 +526,11 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
   };
   const saveProduct = async event => {
     event.preventDefault();
+    setSaveError('');
+    if (!String(form.nameZh || '').trim() || !String(form.descriptionZh || '').trim()) {
+      setSaveError('Please enter the Chinese product name and description before saving.');
+      return;
+    }
     if (form.status === 'published' && (!form.sourceVerified || !form.sourceEvidenceNote.trim())) {
       setSaveError('发布前必须确认来源已核验，并填写不含敏感信息的供货依据摘要。');
       return;
@@ -526,7 +539,6 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
     const productBase = { ...form, id:form.id || `product-${Date.now()}`, brandZh:brand.zh, price:Number(form.price), stock:Number(form.stock), sourceVerified:Boolean(form.sourceVerified), sourceEvidenceNote:form.sourceEvidenceNote.trim(), updatedAt:new Date().toISOString() };
     const product = { ...productBase, tags:deriveProductTags(productBase) };
     setSaving(true);
-    setSaveError('');
     try {
       const saved = await saveAdminProduct(session, product);
       setProducts(items => form.id ? items.map(item => item.id === form.id ? saved : item) : [saved, ...items]);
@@ -569,6 +581,48 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
     } finally { setTranslating(false); }
   };
   const visible = products.filter(product => `${product.nameZh} ${product.nameEn} ${product.brandEn} ${product.brandZh} ${(product.tags || []).join(' ')}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const productsPerPage = 50;
+  const productPageCount = Math.max(1, Math.ceil(visible.length / productsPerPage));
+  const activeProductPage = Math.min(productPage, productPageCount - 1);
+  const paginatedVisible = visible.slice(activeProductPage * productsPerPage, (activeProductPage + 1) * productsPerPage);
+  const visibleIds = visible.map(product => product.id);
+  const pageIds = paginatedVisible.map(product => product.id);
+  const selectedVisibleIds = visibleIds.filter(id => selectedProductIds.includes(id));
+  const selectedPageIds = pageIds.filter(id => selectedProductIds.includes(id));
+  const toggleProductSelection = productId => setSelectedProductIds(ids => ids.includes(productId) ? ids.filter(id => id !== productId) : [...ids, productId]);
+  const toggleVisibleSelection = () => setSelectedProductIds(ids => selectedVisibleIds.length === visibleIds.length ? ids.filter(id => !visibleIds.includes(id)) : [...new Set([...ids, ...visibleIds])]);
+  const togglePageSelection = () => setSelectedProductIds(ids => selectedPageIds.length === pageIds.length ? ids.filter(id => !pageIds.includes(id)) : [...new Set([...ids, ...pageIds])]);
+  const applyBulkChanges = async () => {
+    const selected = products.filter(product => selectedProductIds.includes(product.id));
+    if (!selected.length || batchSaving) return;
+    const evidence = batchSourceEvidenceNote.trim();
+    const targets = selected.map(product => ({
+      ...product,
+      status: batchTargetStatus,
+      sourceVerified: batchApplySource ? batchSourceVerified : product.sourceVerified,
+      sourceEvidenceNote: batchApplySource ? evidence : product.sourceEvidenceNote,
+      updatedAt:new Date().toISOString(),
+    }));
+    const publishable = targets.filter(product => product.sourceVerified && String(product.sourceEvidenceNote || '').trim());
+    if (batchTargetStatus === 'published' && publishable.length !== targets.length) return setBatchStatus('发布前，每件所选商品都必须完成来源核验并填写供货依据。');
+    if (batchApplySource && batchSourceVerified && !evidence) return setBatchStatus('请填写供货依据摘要，或不要将来源核验应用到所选商品。');
+    const action = batchTargetStatus === 'published' ? '发布' : '设为草稿';
+    if (!confirm(`确定更新 ${targets.length} 件所选商品并${action}吗？`)) return;
+    setBatchSaving(true);
+    setBatchStatus('正在更新所选商品…');
+    try {
+      const saved = [];
+      for (const product of targets) saved.push(await saveAdminProduct(session, product));
+      const savedById = new Map(saved.map(product => [product.id, product]));
+      setProducts(items => items.map(product => savedById.get(product.id) || product));
+      setSelectedProductIds(ids => ids.filter(id => !savedById.has(id)));
+      setBatchStatus(`已更新 ${saved.length} 件商品。`);
+    } catch (error) {
+      setBatchStatus(error.message || '批量更新失败，请稍后重试。');
+    } finally {
+      setBatchSaving(false);
+    }
+  };
   useEffect(() => {
     Promise.all([listAdminOrders(session), listAdminCustomers(session), getSiteSettings()])
       .then(([cloudOrders, cloudCustomers, cloudSettings]) => {
@@ -619,14 +673,25 @@ function AdminDashboard({ products, setProducts, onClose, session }) {
         </form>
       </> : view === 'products' ? <>
         <header className="admin-title"><div><p>商品</p><h1>商品管理</h1></div><button onClick={()=>{setForm(emptyForm);setView('editor')}}>＋ 添加商品</button></header>
-        <div className="admin-toolbar"><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="搜索商品或品牌"/><span>{products.length} 件商品</span></div>
+        <div className="admin-toolbar"><input value={search} onChange={event=>{setSearch(event.target.value);setProductPage(0)}} placeholder="搜索商品或品牌"/><span>{products.length} 件商品</span></div>
+        <div className="bulk-product-actions">
+          <span>{selectedProductIds.length} 件已选</span>
+          <button type="button" className="secondary" disabled={!visibleIds.length || batchSaving} onClick={toggleVisibleSelection}>{selectedVisibleIds.length === visibleIds.length ? '取消全选搜索结果' : `全选搜索结果 (${visibleIds.length})`}</button>
+          <select value={batchTargetStatus} disabled={!selectedProductIds.length || batchSaving} onChange={event=>setBatchTargetStatus(event.target.value)}><option value="draft">设为草稿</option><option value="published">发布</option></select>
+          <label className="batch-source-toggle"><input type="checkbox" checked={batchApplySource} disabled={!selectedProductIds.length || batchSaving} onChange={event=>setBatchApplySource(event.target.checked)}/>更新来源核验</label>
+          {batchApplySource && <><label className="batch-source-toggle"><input type="checkbox" checked={batchSourceVerified} disabled={batchSaving} onChange={event=>setBatchSourceVerified(event.target.checked)}/>来源已核验</label><input className="batch-source-note" value={batchSourceEvidenceNote} disabled={batchSaving} onChange={event=>setBatchSourceEvidenceNote(event.target.value)} placeholder="供货依据摘要（应用到所选商品）"/></>}
+          <button type="button" disabled={!selectedProductIds.length || batchSaving} onClick={applyBulkChanges}>{batchSaving ? '正在更新…' : '应用修改'}</button>
+          {batchStatus && <small>{batchStatus}</small>}
+        </div>
         <div className="product-table">
-          <div className="table-head"><span>商品</span><span>状态</span><span>库存</span><span>价格</span><span>操作</span></div>
-          {visible.length === 0 ? <div className="admin-empty"><ShoppingBag/><h2>尚未添加商品</h2><p>添加您的第一件腕表商品。</p><button onClick={()=>setView('editor')}>添加商品</button></div> : visible.map(product => <article key={product.id}>
+          <div className="table-head"><label className="product-select"><input type="checkbox" checked={pageIds.length > 0 && selectedPageIds.length === pageIds.length} onChange={togglePageSelection} aria-label="全选当前页商品"/></label><span>商品</span><span>状态</span><span>库存</span><span>价格</span><span>操作</span></div>
+          {visible.length === 0 ? <div className="admin-empty"><ShoppingBag/><h2>尚未添加商品</h2><p>添加您的第一件腕表商品。</p><button onClick={()=>setView('editor')}>添加商品</button></div> : paginatedVisible.map(product => <article key={product.id}>
+            <label className="product-select"><input type="checkbox" checked={selectedProductIds.includes(product.id)} onChange={() => toggleProductSelection(product.id)} aria-label={`选择 ${product.nameZh || product.nameEn}`}/></label>
             <div className="admin-product-name">{product.media?.[0]?.url ? <img src={product.media[0].url} alt=""/> : <div/>}<span><strong>{product.nameZh || product.nameEn}</strong><small>{product.brandZh} · {product.nameEn}</small></span></div>
             <span className={`status ${product.status}`}>{product.status === 'published' && product.sourceVerified ? '已发布 · 来源已核验' : '待核验草稿'}</span><span>{product.stock}</span><span>US$ {Number(product.price).toLocaleString()}</span><div className="table-actions"><button onClick={()=>editProduct(product)}>编辑</button><button onClick={()=>removeProduct(product.id)}>删除</button></div>
           </article>)}
         </div>
+        {visible.length > productsPerPage && <div className="admin-pagination"><button disabled={activeProductPage === 0} onClick={() => setProductPage(page => Math.max(0, page - 1))}>上一页</button><span>第 {activeProductPage + 1} / {productPageCount} 页 · 每页 50 件</span><button disabled={activeProductPage >= productPageCount - 1} onClick={() => setProductPage(page => Math.min(productPageCount - 1, page + 1))}>下一页</button></div>}
       </> : <form className="product-editor" onSubmit={saveProduct}>
         <header className="admin-title"><div><p>{form.id?'编辑':'新建'}商品</p><h1>{form.id?'编辑商品':'添加商品'}</h1>{saveError && <span className="admin-save-error">{saveError}</span>}</div><div><button type="button" className="secondary" onClick={()=>setView('products')}>取消</button><button type="submit" disabled={saving || uploading}>{saving ? '正在保存…' : '保存商品'}</button></div></header>
         <div className="editor-columns"><div>
